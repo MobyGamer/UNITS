@@ -3,7 +3,8 @@
 {
 Boring generic support routines, JL20041013.  My old generalfunctions unit
 of 17+ years was starting to creep me out (I code a lot better now than I
-did as a teenager) so I decided to start over. Last updated: 20070329
+did as a teenager) so I decided to start over. 
+Last updated: 20120803
 }
 
 unit support;
