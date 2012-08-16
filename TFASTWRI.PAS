@@ -1,0 +1,410 @@
+Unit tfastwrite;
+
+{
+Yet another "fastwrite" routine (write text directly to screen ram).
+Now that 25 years have gone by and I know 8088 assembler to a decent
+level, I got fed up with Borland's routines (I see snow even with
+CheckSnow true!) and decided to write my own.
+
+However, this unit is much faster than Borland's routines; in fact, it
+is among the fastest implementations possible for a 4.77MHz 8088 with
+CGA that fully handles CGA hardware "snow".  Why make such a boastful
+statement?  Here are a few reasons:
+
+- It uses a lookup table for the "y*80*2" portion of the offset calcs,
+which eliminates all MULs from the routine.
+
+- When PreventSnow is on, both horizontal and vertical retrace are used
+when writing strings or doing full-screen copies.
+
+- All the usual 8088 tricks apply:  Using SHL; JC/JNC instead of
+CMP/TEST... full use of LODS/STOS/MOVS where appropriate...1-byte
+opcodes when possible... etc.  I have tried to note this in the code but
+ask me if something seems weird.
+
+BTW, when I refer to "ticks" in the comments, I'm referring to one of the 8253
+timer ticks, each of which is 0.8381 microseconds.  It takes ~1193 ticks to
+equal a millisecond.
+
+trixter@oldskool.org, JL20060318
+}
+
+Interface
+
+Const
+  PreventSnow:Boolean=False;
+
+var
+  tfMaxScrX,tfMaxScrY:byte;
+  tfScrSizeInWords:word;
+
+Procedure tfastinit(X,Y:Word);
+{Must be called before using the unit; it sets up a lookup table.  This is
+done automatically for 80x25; you will have to call this again if you are
+using something else like 40x25, 90x30, etc.}
+
+Procedure tfastwritexy(SPtr,destscr:Pointer;X,Y:Word;backfore:Byte);
+{Take string s, stick it at scrseg:x,y using attribute byte backfore. This is
+very standard stuff, just fast :-)  *This procedure honors the PreventSnow
+variable.*}
+
+Procedure tfastwritexyHiASCII(SPtr,destscr:Pointer;X,Y:Word;backfore:Byte);
+{Identical to tFastWriteXY except it automatically highlights any ASCII
+character in the range #32-#127 by setting the intensity bit in the
+foreground color portion of the attribute byte.}
+
+Procedure tfastclrscr(destscr:Pointer;backfore,filler:Byte);
+{Clears the screen using attribute backfore.  Call this *after* tfastinit. No
+wait for retrace on this one since there's no point, it's not called often
+enough.}
+
+Procedure tfastcopyscreen(sourcescr,destscr:Pointer);
+{Copies a hidden screen to visible screen ram.  *This procedure honors the
+PreventSnow variable*.}
+
+Implementation
+
+Uses
+  m6845ctl,
+  support;
+
+Const
+  tftableready:Boolean=False;
+  maxscrlines=50;
+  maxscrcols=132;  {for vesa; I've gotten 90x30 to work on stock CGA}
+
+Var
+  offstable:Array[0..maxscrlines-1] Of Word;
+  {bytes would work too as the four lower bits of
+  all offsets are 0, but then you'd have to SHL num,4 and that eats
+  up the time you're trying to save in the first place}
+
+Procedure tfastinit(X,Y: Word);
+{This sets up a lookup table used so that the MULs can be turned into a table.
+Yes, I know that you can calc *80 using *64+*16 -- this is still faster.}
+Var
+  ycount:Byte;
+
+Begin
+  If X > maxscrcols Then X := maxscrcols;
+  If Y > maxscrlines Then Y := maxscrlines;
+  For ycount := 0 To Y Do offstable [ycount] := (ycount * X * 2);
+  tfmaxscrx := X; tfmaxscry := Y;
+  tfscrsizeinwords := X * Y;
+  tftableready := True;
+End;
+
+Procedure tfastwritexy(SPtr,destscr: Pointer; X,Y: Word; backfore: Byte); Assembler;
+{
+CGA "snow" handling OFF notes:  Unless I'm missing something obvious, this
+is the fastest routine of its kind for 8088.  If you can optimize it to be
+faster on 8088, you win a prize from trixter@oldskool.org.
+
+CGA "snow" handling ON notes:  Eliminates snow by waiting for horizontal
+retrace and utilizing vertical retrace if possible.  The tradeoff for using
+vertical retrace is that sometimes there is snow *barely visible* in the
+*first scanline only* of the visible display, but it is annoying, so you can
+undefine PERFECTNOSNOW if you want to speed up the routine 30%-60%.
+}
+
+{$DEFINE PERFECTNOSNOW}
+
+const
+  ScreenSeg=$b800;
+Asm
+  cmp  tftableready,0      {0 = byte(boolean(false))}
+  je   @alldone            {Don't write into an unknown void without the lookup table}
+
+  les  DI,destscr          {set up es:di to point to base of destination}
+  mov  dx,es               {need this for later comparison}
+  mov  si,Y
+  shl  si,1                {si=Y * 2 because si is an index into a table of words}
+  add  di,[offset offstable+si] {advance es:di to correct row by looking it up in precalc table (to eliminate MUL)}
+  mov  AX,X                {grab x,}
+  shl  AX,1                {multiply by 2,}
+  add  DI,AX               {now di = (y*numcols) + (x*2), so es:di points to where we'll start writing}
+  mov  AH,backfore         {get attribute byte ready for our STOSW}
+  mov  BL,PreventSnow      {when we change DS, we lose our vars, so save this}
+  push DS
+  lds  SI,SPtr             {ds:si = string with first byte as length}
+  cld
+  lodsb                    {grab length of string - hooray for Pascal strings!}
+  xor  ch,ch
+  mov  CL,AL               {use it as our counter}
+  jcxz @alldone            {0 length?  then get out of here before we write FFFF bytes by mistake}
+  {at this point, we have everything we need:
+  ds:si=source string; cx=length of string; es:di=destination}
+  cmp  BL,0                {is preventsnow false?}
+  je   @writeloopfast      {if so, jump to the fast screen update loop}
+  cmp  dx,ScreenSeg        {are we writing to the traditional segment for screen ram?}
+  jne  @writeloopfast      {if not, let's assume there's no need to wait for retrace}
+
+  MOV  DX,m6845_status
+  pushf                    {protection against interrupts if we ourselves are called in an interrupt}
+@writeloopslow:
+  lodsb                    {grab our character to al}
+  xchg bx,ax               {now hide it in bh - xchg bx,ax is 1-byte opcode}
+  cli                      {I hate doing this, but interrupts screw up timing}
+@WDN:                      {wait until we're out of some random retrace we may have started in}
+  In   AL,DX               {grab status bits}
+  {$IFNDEF PERFECTNOSNOW}
+  Test AL,c_vertical_sync  {are we in vertical retrace?}
+  jnz  @blastit            {if so, we've got time to write a word, let's do it!}
+  shr  al,1                {are we in some random horiz retrace?  If so, wait}
+  jc   @WDN                {until we're out of it so we can sync properly}
+  {$ELSE}
+  test al,c_display_enable {are we in some random horizontal sync cycle?}
+  jnz  @WDN                {if so, keep waiting}
+  {$ENDIF}
+@WDR:                      {wait until we're in either vert or horiz retrace}
+  In   AL,DX               {grab status bits}
+  shr  al,1                {shift bit into carry -- were we in horizontal retrace?}
+  jnc  @WDR                {if not, keep waiting}
+@blastit:
+  xchg bx,ax               {get char back - xchg accum,reg16 is 1-byte opcode and we need that speed (on 8088, size is money!)}
+  stosw                    {write it out - stosw is another 1-byte opcode - we need speed because otherwise we will see snow!}
+  sti
+  loop @writeloopslow      {keep looping to put the string out}
+  popf                     {restore prior interrupt state}
+  jmp  @alldone
+
+@writeloopfast:
+  {we unroll this so we can exploit our tiny 4-byte prefetch queue on 8088}
+  mov  dx,cx               {preserve original count for later}
+  shr  cx,1
+  shr  cx,1
+  shr  cx,1
+  jcxz @handlestragglers   {jump if string length < size that unrolled loop handles}
+@copyloopunrolled:
+  lodsb                    {load character}
+  stosw                    {store attrib+char}
+  lodsb                    {in case it wasn't obvious, lodsb and stosw are}
+  stosw                    {1 bytes, so we keep the 4-byte prefetch queue}
+  lodsb                    {full by doing this.  In case this seems like}
+  stosw                    {a waste, go ahead and do your own tests and}
+  lodsb                    {you'll see this is the fastest mix of unrolling}
+  stosw
+  lodsb
+  stosw
+  lodsb
+  stosw
+  lodsb
+  stosw
+  lodsb
+  stosw
+  loop @copyloopunrolled
+@handlestragglers:
+  mov  cx,dx        {cx:=number of times we'll have to do this after the unrolled loop}
+  and  cx,00000111b
+  jcxz @alldone     {Length was a multiple of the size of the unroll loop (no remainder) so bail}
+@copyloopsingle:
+  lodsb
+  stosw
+  loop @copyloopsingle
+@alldone:
+  pop  DS
+End;
+
+Procedure tfastwritexyHiASCII(SPtr,destscr: Pointer; X,Y: Word; backfore: Byte); Assembler;
+{
+This isn't as optimized as tfastwritexy as it checks each character for whether
+or not it is in the ASCII range 32-127 (a printable character) and, if so,
+"highlights" it by setting the intensity bit in the foreground color portion
+of the attribute byte.
+
+See tfastwritexy notes for how snow is handled.
+}
+
+const
+  ScreenSeg=$b800;
+Asm
+  cmp  tftableready,0      {0 = byte(boolean(false))}
+  je   @alldone            {Don't write into an unknown void without the lookup table}
+
+  les  DI,destscr          {set up es:di to point to base of destination}
+  mov  dx,es               {need this for later comparison}
+  mov  si,Y
+  shl  si,1
+  add  di,[offset offstable+si]
+  mov  AX,X                {grab x,}
+  shl  AX,1                {multiply by 2,}
+  add  DI,AX               {now di = (y*numcols) + (x*2), so es:di points to screen}
+  mov  AH,backfore         {get attribute byte ready for our STOSW}
+  mov  BL,PreventSnow      {when we change DS, we lose our vars, so save this}
+  push DS
+  lds  SI,SPtr             {ds:si = string with first byte as length}
+  cld
+  lodsb                    {grab length of string}
+  xor  ch,ch
+  mov  CL,AL               {use it as our counter}
+  jcxz @alldone            {0 length?  then get out of here before we write FFFF bytes by mistake}
+  {at this point, we have everything we need:
+  ds:si=source string; cx=length of string; es:di=destination}
+  cmp  BL,0                {is preventsnow false?}
+  je   @writeloopfast      {if so, jump to the fast screen update loop}
+  cmp  dx,ScreenSeg        {are we writing to the traditional segment for screen ram?}
+  jne  @writeloopfast      {if not, let's assume there's no need to wait for retrace}
+
+  MOV  DX,m6845_status
+  pushf                    {protection against interrupts if we ourselves are called in an interrupt}
+  cli                      {necessary evil to ensure no snow}
+@writeloopslow:
+  and  ah,11110111b        {turn off any highlight we may have set previously}
+  lodsb                    {grab our character to al}
+  sub  al,32               {subtract our char so that it now ranges from 0 to 127-32}
+  cmp  al,127-32           {compare to upper bound of our range}
+  ja   @hideit             {if above, don't highlight it}
+  or   ah,00001000b        {highlight foreground color}
+@hideit:
+  add  al,32               {fix our value back to before range comparison}
+  xchg bx,ax               {now hide it in bh}
+@WDN:                      {wait until we're out of some random retrace we may have started in}
+  In   AL,DX               {grab status bits}
+  {$IFNDEF PERFECTNOSNOW}
+  Test AL,c_vertical_sync  {are we in vertical retrace?}
+  jnz  @blastit            {if so, we've got time to write a word, let's do it!}
+  shr  al,1                {are we in some random horiz retrace?  If so, wait
+  jc   @WDN                {until we're out of it so we can sync properly}
+  {$ELSE}
+  test al,c_display_enable {are we in some random horizontal sync cycle?}
+  jnz  @WDN                {if so, keep waiting}
+  {$ENDIF}
+@WDR:                      {wait until we're in either vert or horiz retrace}
+  In   AL,DX               {grab status bits}
+  shr  al,1                {shift bit into carry -- were we in horizontal retrace?}
+  jnc  @WDR                {if not, keep waiting}
+@blastit:
+  xchg bx,ax               {get char back - xchg accum,reg16 is 1-byte opcode and we need that speed (on 8088, size is money!)}
+  stosw                    {write it out - stosw is another 1-byte opcode - we need speed because otherwise we will see snow!}
+  loop @writeloopslow      {keep looping to put the string out}
+  popf                     {restore prior interrupt state}
+  jmp  @alldone
+
+@writeloopfast:
+  and  ah,11110111b        {turn off any highlight we may have set}
+  lodsb                    {load character}
+  sub  al,32               {we don't care about values under 32}
+  cmp  al,127-32           {compare to range}
+  ja   @slamit             {if above, outside of range so don't highlight it}
+  or   ah,00001000b        {if printable ASCII,highlight foreground color}
+@slamit:
+  add  al,32               {fix value back to before range comparison}
+  stosw                    {store attrib+char}
+  loop @writeloopfast
+@alldone:
+  pop  DS
+End;
+
+Procedure tfastclrscr (destscr:Pointer;backfore,filler:Byte); Assembler;
+Asm
+  cmp  tftableready,0      {we need this to get sizeinwords}
+  je   @cleardone          {Don't write into an unknown void without the lookup table}
+  les  DI,destscr
+  mov  AH,backfore
+  mov  AL,filler
+  mov  CX,tfscrsizeinwords
+  cld
+  rep  stosw
+@cleardone:
+End;
+
+Procedure tfastcopyscreen(sourcescr,destscr:Pointer); Assembler;
+{
+If prevent snow is on, screen ram is updated during vertical and horizontal
+retraces only.  This means a full-screen snow-free update can happen about 12
+times a second (fast!), thanks to taking advantage of horizontal retrace too.
+Much thanks to Richard Wilton for the idea and example code.
+}
+
+Const
+  horiz_timeout=6;
+  vb_chunksize=470; {empirically discovered (I adjusted manually until I
+  didn't see any more snow; this was on a true blue IBM PC/XT}
+
+Asm
+  cmp     tftableready,0   {we need this to get sizeinwords}
+  je      @finalend        {Don't write into an unknown void without the lookup table}
+  mov     CX, tfscrsizeinwords
+  mov     AL, PreventSnow
+  les     DI, destscr
+  push    DS
+  lds     SI, sourcescr
+  cmp     AL, 0            {is preventsnow true?}
+  ja      @doitnicely      {if so, jump to our screen update loop}
+  cld
+  rep     movsw            {if not, slam it!!}
+  jmp     @donecopy        {...and then exit the routine}
+
+@doitnicely:
+  MOV     DX, m6845_status
+
+{write during remaining vertical blanking interval}
+@L01:
+  mov     bx,cx            {preserve buffer length in BX}
+  mov     cx,horiz_timeout {CX := horizontal timeout}
+  cli                      {disable interrupts during loop}
+@L02:
+  in      al,dx            {AL := video status}
+  test    al,c_display_enable
+  loopnz  @L02             {loop while Display Enable inactive}
+  jz      @L03             {jump if loop did not time out}
+  movsw                    {copy one word}
+  sti
+  mov     cx,bx            {CX := buffer length}
+  loop    @L01
+  jmp     @donecopy        {exit (entire string copied)}
+
+{write during horizontal blanking intervals}
+@L03:
+  sti
+  mov     cx,bx            {restore CX}
+@L04:
+  lodsw                    {AL := character code, AH := attribute}
+  mov     bx,ax            {BX := character and attribute}
+  push    cx               {preserve word loop counter}
+  mov     cx,horiz_timeout {CX := timeout loop limit}
+  cli                      {clear interrupts during one scan line}
+@L05:
+  in      al,dx
+  test    al,c_display_enable
+  loopnz  @L05             {loop during horizontal blanking until timeout occurs}
+  jnz     @L07             {jump if timed out (vertical blanking has started)}
+@L06:
+  in      al,dx
+  test    al,c_display_enable
+  jz      @L06             {loop while Display Enable is active}
+  xchg    bx,ax            {AX := character & attribute}
+  stosw                    {copy 2 bytes to display buffer}
+  sti                      {restore interrupts}
+  pop     cx               {CX := word loop counter}
+  loop    @L04
+  jmp     @donecopy        {exit (entire string copied)}
+
+{write during entire vertical blanking interval}
+@L07:
+  pop     bx               {BX := word loop counter}
+  dec     si
+  dec     si               {DS:SI -> word to copy from buffer}
+  mov     cx,vb_chunksize  {CX := # of words to copy}
+  cmp     bx,cx
+  jnb     @L08             {jump if more than vb_chunksize words remain in buffer}
+  mov     cx,bx            {CX := # of remaining words in buffer}
+  xor     bx,bx            {BX := 0}
+  jmp     @L09
+@L08:
+  sub     bx,cx            {BX := (# of remaining words) - vb_chunksize}
+@L09:
+  cld
+  rep     movsw            {copy to video buffer}
+  mov     cx,bx            {CX := # of remaining words}
+  test    cx,cx
+  jnz     @L01             {loop until buffer is displayed}
+
+@donecopy:
+  pop  DS
+@finalend:
+End;
+
+Begin
+  tfastinit(80,25); {just in case the user forgets}
+End.
