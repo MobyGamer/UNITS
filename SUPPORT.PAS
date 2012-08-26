@@ -33,6 +33,7 @@ Function NumToExt(w:word):s12;
 Function ReadKeyChar:Char;
 Function KeyPressed:Boolean;
 Function upstring(s:string):string;
+Function upchar(c:char):char;
 Function EXEsize(fname:string):longint;
 Function DiskReady(Drive:char):boolean;
 Function hex(l:longint):s12;
@@ -74,6 +75,7 @@ function SearchString(var s:string; var buf; buflen:word):word; {returns positio
 Function SimpleMenu(title,m:string):byte;
 {Simple menu.
 If EXIT or anything above it is chosen, 0 is returned, signifying an exit.}
+Function InV86:boolean; {returns TRUE if we are already in protected mode}
 
 implementation
 
@@ -190,6 +192,18 @@ asm
 @done:
   pop   ds
 end;
+
+Function upchar; assembler;
+asm
+  mov   al,c
+  cmp   al,'a'
+  jb    @noconvert
+  cmp   al,'z'
+  ja    @noconvert
+  sub   al,20h
+@noconvert:
+end;
+
 (*Function upstring(name:string):string;
 var
   loop:byte;
@@ -854,6 +868,21 @@ begin
   SimpleMenu:=b;
 end;
 
+function InV86:boolean;assembler;
+asm
+  xor  ax,ax
+  cmp  System.Test8086,2
+  jl   @done
+  db   $0f,$20,$c0 {mov eax,cr0} {get status of protected mode}
+  and  al,1                      {bit 1 is protected mode flag}
+(*
+  test ax,1                      {test if protmode flag is up}
+  mov  al,0
+  jz   @done                     {if not, we're done}
+  mov  al,1                      {otherwise, continue and put up a flag}
+*)
 
+@done:
+end;
 
 end.

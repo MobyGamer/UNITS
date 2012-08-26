@@ -1,3 +1,4 @@
+{$O-} {Unit must never be overlaid}
 {$F+} { Force far mode, a good idea when mucking around with interrupts }
 {$R-,S-} {must NOT have stack checking!}
 {
