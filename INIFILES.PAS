@@ -1,4 +1,9 @@
 {$O+,F+}
+
+{$DEFINE TRIMVALUESPACES}
+{if defined, values will have leading and trailing
+spaces trimmed before passed to the user}
+
 unit inifiles;
 {
 As the name implies, a simple unit to read and write .ini files, which
@@ -209,6 +214,18 @@ begin
     if _seploc <> 0 then begin
       lastResult.Key:=Copy(temps,1,_seploc-1);
       lastResult.Value:=Copy(temps,_seploc+1,length(temps));
+      {$IFDEF TRIMVALUESPACES}
+      with lastResult do begin
+        {trim leading spaces}
+        if length(Value)>1 then begin
+          while (Value<>'') and (Value[1]=#32)
+            do delete(Value,1,1);
+          {trim trailing spaces}
+          while (Value<>'') and (Value[length(Value)]=#32)
+            do delete(Value,length(Value),1);
+        end;
+      end;
+      {$ENDIF}
     end;
   end;
 
