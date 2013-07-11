@@ -1,4 +1,3 @@
-{$O-} {Unit must never be overlaid}
 {$F+} { Force far mode, a good idea when mucking around with interrupts }
 {$R-,S-} {must NOT have stack checking!}
 {
@@ -10,6 +9,8 @@ This unit wouldn't be possible without the hard work and writing of:
 Thank you gentlemen!
 
 See tinttest.pas for example usage.
+
+Version 0.3 20130503 added PCjr vint stuff
 }
 
 unit TInterrupts;
@@ -67,6 +68,7 @@ type
 
 var
   BIOSTimerHandler:procedure;
+  VINTsave:pointer;
   PITcycles,
   Chan0Counter:longint;
 
@@ -74,10 +76,22 @@ procedure InitChannel(channel,accessMode,mode:byte;divisor:word);
 {Inits a channel -- mostly used internally but public interface
 provided in case you want to do something custom}
 
-procedure SetTimer(TimerHandler:pointer;frequency:word);
-{Save the address of the BIOS handler, install our own, set up the
+procedure SetTimerHz(TimerHandler:pointer;frequency:word);
+procedure SetTimerExact(TimerHandler:pointer;cycles:word);
+procedure SetTimerCGAVINT(TimerHandler:pointer);
+{
+Save the address of the BIOS handler, install our own, set up the
 variables we'll use and program PIT channel 0 for the divide-by-N mode
-at the frequency we need.}
+at the frequency we need.
+
+In the case of CGAVINT, we simulate a vertical retrace interrupt that
+fires "early", directly after the last drawn scanline.  This gives us
+some extra time to do things before we start retracing back up the screen.
+}
+
+procedure HookPCjrVINT(newVINTHandler:pointer);
+procedure unHookPCjrVINT;
+{Hooks an interrupt handler to the PCjr hardware vertical retrace interrupt}
 
 procedure CleanUpTimer;
 {Reset everything back to the way we left it}
@@ -144,6 +158,7 @@ mode/command register except when RL1,RL0 = 0,0 or when SC1,0 = 1,1).
 *)
 
 uses
+  m6845ctl,
   dos;
 
 const
@@ -179,7 +194,62 @@ begin
 	asm popf end;
 end;
 
-procedure SetTimer(TimerHandler : pointer; frequency : word);
+Procedure InitChannelCGAVINT(channel,accessMode,mode:byte;divisor:word);
+const
+  chan0base=$40;
+var
+  modecmd,lobyte,hibyte,chanport:byte;
+begin
+  {check for valid input allowed:
+    only channels 0 and 2 (1 is for DRAM REFRESH, do NOT touch!)
+    only accessmodes 1 through 3 (0 is not an access mode)}
+	if not (channel in [0,2]) or not (accessMode in [1..3]) then exit;
+  {precalc how we're going to set the channel, so we don't tie up too much
+  time with interrupts turned off}
+  modecmd:=(channel shl 6) + (accessMode shl 4) + ((mode AND $7) shl 1); {bit 0 always 0 for 16-bit mode}
+  lobyte:=lo(divisor);
+  hibyte:=hi(divisor);
+  chanport:=chan0base+channel;
+  {must make these changes atomic, so disable interrupts before starting}
+	asm
+    {get to end of display cycle}
+    mov   dx,m6845_status
+    mov   bl,c_vertical_sync
+    mov   bh,c_display_enable or c_vertical_sync
+    mov   ah,c_display_enable
+    mov   cx,199
+    pushf
+    cli
+  @WDR:
+    in    al,dx
+    test  al,bl
+    jz    @WDR  {wait if not vertically retracing}
+    {Now we are tracing back up the screen.  Wait until first scanline.}
+  @hor1:
+    in    al,dx
+    test  al,bh
+    jnz   @hor1 {wait until not horizontally or vertically retracing}
+    {Now we are drawing our first scanline.}
+  @hor2:
+    in    al,dx
+    test  al,ah
+    jz    @hor2 {wait until horizontally retracing}
+    loop  @hor1 {loop 199 more times}
+
+    {set new rate}
+    mov     al,modecmd
+    out     CTCModeCommandReg,al
+    xor     dx,dx
+    mov     dl,chanport
+    mov     al,lobyte
+    out     dx,al
+    mov     al,hibyte
+    out     dx,al
+	  popf
+  end;
+end;
+
+procedure SetTimerHz(TimerHandler : pointer; frequency : word);
 begin
   { Do some initialization }
   PITcycles := 0;
@@ -191,6 +261,34 @@ begin
 
   {init channel 0, 3=access mode lobyte/hibyte, mode 2, 16-bit binary}
   InitChannel(0,3,2,Chan0Counter);
+end;
+
+procedure SetTimerExact(TimerHandler : pointer; cycles : word);
+begin
+  { Do some initialization }
+  PITcycles := 0;
+  Chan0Counter := cycles;
+
+  { Store the current BIOS handler and set up our own }
+  GetIntVec(SystemTimerInt, @BIOSTimerHandler);
+  SetIntVec(SystemTimerInt, TimerHandler);
+
+  {init channel 0, 3=access mode lobyte/hibyte, mode 2, 16-bit binary}
+  InitChannel(0,3,2,Chan0Counter);
+end;
+
+procedure SetTimerCGAVINT(TimerHandler : pointer);
+begin
+  { Do some initialization }
+  PITcycles := 0;
+  Chan0Counter := 912*262 div 12;
+
+  { Store the current BIOS handler and set up our own }
+  GetIntVec(SystemTimerInt, @BIOSTimerHandler);
+  SetIntVec(SystemTimerInt, TimerHandler);
+
+  {init channel 0, 3=access mode lobyte/hibyte, mode 2, 16-bit binary}
+  InitChannelCGAVINT(0,3,2,Chan0Counter);
 end;
 
 procedure CleanUpTimer;
@@ -250,6 +348,48 @@ begin
 	port[$61]:=(port[$61] AND (NOT $3));
 	asm popf end;
   lastSpeakerFreq:=$ffff; {set to some value the user will never enter}
+end;
+
+procedure HookPCjrVINT(newVINTHandler:pointer);
+begin
+  { Store the current BIOS handler and set up our own }
+  GetIntVec(5+8, VINTsave);
+  SetIntVec(5+8, newVINTHandler);
+
+  {Enable hardware interrupt 5 in PIC}
+  asm
+    mov     dx,$21
+    in      al,dx           {bring in current PIC mask}
+    and     al,not (1 SHL 5){AND to enable, OR to disable}
+    out     dx,al           {update PIC mask}
+  end;
+end;
+
+procedure unHookPCjrVINT;
+begin
+  {Disable hardware interrupt 5 in PIC}
+  asm
+    mov     dx,$21
+    in      al,dx           {bring in current PIC mask}
+    or      al,1 SHL 5      {AND to enable, OR to disable}
+    out     dx,al           {update PIC mask}
+  end;
+
+  {Restore old handler}
+  SetIntVec(5+8, VINTsave);
+
+  {Enable hardware interrupt 5 in PIC}
+  asm
+    mov     dx,$21
+    in      al,dx           {bring in current PIC mask}
+    and     al,not (1 SHL 5){AND to enable, OR to disable}
+    out     dx,al           {update PIC mask}
+  end;
+
+  {There's actually no point in turning the PCjr VINT IRQ5 back on because
+  the default handler at f000:f815 in a real PCjr disables it on first call,
+  implying that the vint is for user programs only.  But we do it here to
+  be an example of best practices.}
 end;
 
 end.

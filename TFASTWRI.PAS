@@ -1,42 +1,49 @@
+{$Q-,R-,S-,G-}
 Unit tfastwrite;
 
 {
+WARNING:
+Do not use snow checking if calling these routines from an interrupt.
+(You should not be writing strings from an interrupt anyway!)
+
+TFASTWRITE:
 Yet another "fastwrite" routine (write text directly to screen ram).
+
 Now that 25 years have gone by and I know 8088 assembler to a decent
 level, I got fed up with Borland's routines (I see snow even with
 CheckSnow true!) and decided to write my own.
-
 However, this unit is much faster than Borland's routines; in fact, it
-is among the fastest implementations possible for a 4.77MHz 8088 with
-CGA that fully handles CGA hardware "snow".  Why make such a boastful
-statement?  Here are a few reasons:
+is likely the fastest implementation possible for a 4.77MHz 8088 with
+CGA that fully handles CGA hardware "snow":
 
-- It uses a lookup table for the "y*80*2" portion of the offset calcs,
-which eliminates all MULs from the routine.
+- No MULs; uses a lookup table for the "y*80*2" portion of the offset calcs
+
+- Optimal unrolled copy based on 8088 timings
 
 - When PreventSnow is on, both horizontal and vertical retrace are used
-when writing strings or doing full-screen copies.
+when writing strings or doing full-screen copies
 
-- All the usual 8088 tricks apply:  Using SHL; JC/JNC instead of
+- Usual 8088 tricks:  Using SHL; JC/JNC instead of
 CMP/TEST... full use of LODS/STOS/MOVS where appropriate...1-byte
 opcodes when possible... etc.  I have tried to note this in the code but
 ask me if something seems weird.
 
-BTW, when I refer to "ticks" in the comments, I'm referring to one of the 8253
-timer ticks, each of which is 0.8381 microseconds.  It takes ~1193 ticks to
-equal a millisecond.
-
 trixter@oldskool.org, JL20060318
+Code revised JL20121013:
+  + Wrung a hair more speed out of it, can now copy an 80x25 screen
+  in < 50ms with snow checking on
+  + added MDA support, and won't check for snow on MDAs
 }
 
 Interface
 
 Const
-  PreventSnow:Boolean=False;
+  tfPreventSnow:Boolean=False;
 
 var
   tfMaxScrX,tfMaxScrY:byte;
   tfScrSizeInWords:word;
+  tfScreenSeg:word;
 
 Procedure tfastinit(X,Y:Word);
 {Must be called before using the unit; it sets up a lookup table.  This is
@@ -48,10 +55,12 @@ Procedure tfastwritexy(SPtr,destscr:Pointer;X,Y:Word;backfore:Byte);
 very standard stuff, just fast :-)  *This procedure honors the PreventSnow
 variable.*}
 
+(* DEPRECATED
 Procedure tfastwritexyHiASCII(SPtr,destscr:Pointer;X,Y:Word;backfore:Byte);
 {Identical to tFastWriteXY except it automatically highlights any ASCII
 character in the range #32-#127 by setting the intensity bit in the
 foreground color portion of the attribute byte.}
+*)
 
 Procedure tfastclrscr(destscr:Pointer;backfore,filler:Byte);
 {Clears the screen using attribute backfore.  Call this *after* tfastinit. No
@@ -70,11 +79,11 @@ Uses
 
 Const
   tftableready:Boolean=False;
-  maxscrlines=50;
-  maxscrcols=132;  {for vesa; I've gotten 90x30 to work on stock CGA}
+  maxscrlines=16384 div (80*2);
+  maxscrcols=132;  {for vesa, although I've gotten 90x30 to work on stock CGA}
 
 Var
-  offstable:Array[0..maxscrlines-1] Of Word;
+  tfOFStable:Array[0..maxscrlines-1] Of Word;
   {bytes would work too as the four lower bits of
   all offsets are 0, but then you'd have to SHL num,4 and that eats
   up the time you're trying to save in the first place}
@@ -88,7 +97,7 @@ Var
 Begin
   If X > maxscrcols Then X := maxscrcols;
   If Y > maxscrlines Then Y := maxscrlines;
-  For ycount := 0 To Y Do offstable [ycount] := (ycount * X * 2);
+  For ycount := 0 To Y Do tfOFStable [ycount] := (ycount * X * 2);
   tfmaxscrx := X; tfmaxscry := Y;
   tfscrsizeinwords := X * Y;
   tftableready := True;
@@ -109,63 +118,58 @@ undefine PERFECTNOSNOW if you want to speed up the routine 30%-60%.
 
 {$DEFINE PERFECTNOSNOW}
 
-const
-  ScreenSeg=$b800;
 Asm
   cmp  tftableready,0      {0 = byte(boolean(false))}
   je   @alldone            {Don't write into an unknown void without the lookup table}
 
-  les  DI,destscr          {set up es:di to point to base of destination}
+  les  di,destscr          {set up es:di to point to base of destination}
   mov  dx,es               {need this for later comparison}
   mov  si,Y
   shl  si,1                {si=Y * 2 because si is an index into a table of words}
-  add  di,[offset offstable+si] {advance es:di to correct row by looking it up in precalc table (to eliminate MUL)}
-  mov  AX,X                {grab x,}
-  shl  AX,1                {multiply by 2,}
-  add  DI,AX               {now di = (y*numcols) + (x*2), so es:di points to where we'll start writing}
-  mov  AH,backfore         {get attribute byte ready for our STOSW}
-  mov  BL,PreventSnow      {when we change DS, we lose our vars, so save this}
-  push DS
-  lds  SI,SPtr             {ds:si = string with first byte as length}
+  add  di,[offset tfOFStable+si] {advance es:di to correct row using precalc table}
+  mov  ax,X                {grab x,}
+  shl  ax,1                {multiply by 2,}
+  add  di,ax               {now di = (y*numcols) + (x*2), so es:di points to where we'll start writing}
+  mov  ah,backfore         {get attribute byte ready for our STOSW}
+  mov  bl,tfPreventSnow    {when we change DS, we lose our vars, so save this}
+  push ds
+  lds  si,SPtr             {ds:si = string with first byte as length}
   cld
-  lodsb                    {grab length of string - hooray for Pascal strings!}
+  lodsb                    {grab length of string}
   xor  ch,ch
-  mov  CL,AL               {use it as our counter}
-  jcxz @alldone            {0 length?  then get out of here before we write FFFF bytes by mistake}
-  {at this point, we have everything we need:
-  ds:si=source string; cx=length of string; es:di=destination}
-  cmp  BL,0                {is preventsnow false?}
+  mov  cl,al               {use it as our counter}
+  jcxz @alldone            {0 length?  get out of here before we write FFFF bytes by mistake}
+  {at this point, we have everything we need:}
+  {ds:si=source string; cx=length of string; es:di=destination}
+  shr  bl,1                {is preventsnow false? (bl=01=true}
+  jnc  @writeloopfast      {if so, jump to the fast screen update loop}
+  cmp  dh,$b0              {are we writing to the MDA? (dx=$b000)}
   je   @writeloopfast      {if so, jump to the fast screen update loop}
-  cmp  dx,ScreenSeg        {are we writing to the traditional segment for screen ram?}
-  jne  @writeloopfast      {if not, let's assume there's no need to wait for retrace}
+  cmp  dh,$b8              {are we writing to the CGA? (dx=$b800)}
+  jne  @writeloopfast      {if not, jump to the fast screen update loop}
 
-  MOV  DX,m6845_status
-  pushf                    {protection against interrupts if we ourselves are called in an interrupt}
+  mov  dx,m6845_status
 @writeloopslow:
   lodsb                    {grab our character to al}
-  xchg bx,ax               {now hide it in bh - xchg bx,ax is 1-byte opcode}
-  cli                      {I hate doing this, but interrupts screw up timing}
+  xchg bx,ax               {now hide it in bl - xchg bx,ax is 1-byte opcode}
+  cli                      {start of critical time}
 @WDN:                      {wait until we're out of some random retrace we may have started in}
-  In   AL,DX               {grab status bits}
+  in   al,dx               {grab status bits}
   {$IFNDEF PERFECTNOSNOW}
-  Test AL,c_vertical_sync  {are we in vertical retrace?}
+  test al,c_vertical_sync  {are we in vertical retrace?}
   jnz  @blastit            {if so, we've got time to write a word, let's do it!}
+  {$ENDIF}
   shr  al,1                {are we in some random horiz retrace?  If so, wait}
   jc   @WDN                {until we're out of it so we can sync properly}
-  {$ELSE}
-  test al,c_display_enable {are we in some random horizontal sync cycle?}
-  jnz  @WDN                {if so, keep waiting}
-  {$ENDIF}
 @WDR:                      {wait until we're in either vert or horiz retrace}
-  In   AL,DX               {grab status bits}
-  shr  al,1                {shift bit into carry -- were we in horizontal retrace?}
+  in   al,dx               {grab status bits}
+  shr  al,1                {were we in horizontal retrace?}
   jnc  @WDR                {if not, keep waiting}
 @blastit:
-  xchg bx,ax               {get char back - xchg accum,reg16 is 1-byte opcode and we need that speed (on 8088, size is money!)}
-  stosw                    {write it out - stosw is another 1-byte opcode - we need speed because otherwise we will see snow!}
-  sti
+  xchg bx,ax               {get char back - 1-byte opcode}
+  stosw                    {write it out - another 1-byte opcode - we need speed because otherwise we will see snow!}
+  sti                      {end of critical time}
   loop @writeloopslow      {keep looping to put the string out}
-  popf                     {restore prior interrupt state}
   jmp  @alldone
 
 @writeloopfast:
@@ -182,9 +186,9 @@ Asm
   stosw                    {1 bytes, so we keep the 4-byte prefetch queue}
   lodsb                    {full by doing this.  In case this seems like}
   stosw                    {a waste, go ahead and do your own tests and}
-  lodsb                    {you'll see this is the fastest mix of unrolling}
-  stosw
-  lodsb
+  lodsb                    {you'll see this is the fastest mix of unrolling.}
+  stosw                    {I tried multiple combinations and this was the}
+  lodsb                    {best result.}
   stosw
   lodsb
   stosw
@@ -202,9 +206,10 @@ Asm
   stosw
   loop @copyloopsingle
 @alldone:
-  pop  DS
+  pop  ds
 End;
 
+(* DEPRECATED
 Procedure tfastwritexyHiASCII(SPtr,destscr: Pointer; X,Y: Word; backfore: Byte); Assembler;
 {
 This isn't as optimized as tfastwritexy as it checks each character for whether
@@ -215,8 +220,6 @@ of the attribute byte.
 See tfastwritexy notes for how snow is handled.
 }
 
-const
-  ScreenSeg=$b800;
 Asm
   cmp  tftableready,0      {0 = byte(boolean(false))}
   je   @alldone            {Don't write into an unknown void without the lookup table}
@@ -225,12 +228,12 @@ Asm
   mov  dx,es               {need this for later comparison}
   mov  si,Y
   shl  si,1
-  add  di,[offset offstable+si]
+  add  di,word ptr tfOFStable[si]
   mov  AX,X                {grab x,}
   shl  AX,1                {multiply by 2,}
   add  DI,AX               {now di = (y*numcols) + (x*2), so es:di points to screen}
   mov  AH,backfore         {get attribute byte ready for our STOSW}
-  mov  BL,PreventSnow      {when we change DS, we lose our vars, so save this}
+  mov  BL,tfPreventSnow      {when we change DS, we lose our vars, so save this}
   push DS
   lds  SI,SPtr             {ds:si = string with first byte as length}
   cld
@@ -246,7 +249,6 @@ Asm
   jne  @writeloopfast      {if not, let's assume there's no need to wait for retrace}
 
   MOV  DX,m6845_status
-  pushf                    {protection against interrupts if we ourselves are called in an interrupt}
   cli                      {necessary evil to ensure no snow}
 @writeloopslow:
   and  ah,11110111b        {turn off any highlight we may have set previously}
@@ -277,7 +279,7 @@ Asm
   xchg bx,ax               {get char back - xchg accum,reg16 is 1-byte opcode and we need that speed (on 8088, size is money!)}
   stosw                    {write it out - stosw is another 1-byte opcode - we need speed because otherwise we will see snow!}
   loop @writeloopslow      {keep looping to put the string out}
-  popf                     {restore prior interrupt state}
+  sti                      {restore prior interrupt state}
   jmp  @alldone
 
 @writeloopfast:
@@ -294,16 +296,17 @@ Asm
 @alldone:
   pop  DS
 End;
+*)
 
-Procedure tfastclrscr (destscr:Pointer;backfore,filler:Byte); Assembler;
+Procedure tfastclrscr(destscr:Pointer;backfore,filler:Byte); Assembler;
 Asm
   cmp  tftableready,0      {we need this to get sizeinwords}
-  je   @cleardone          {Don't write into an unknown void without the lookup table}
+  je   @cleardone          {Need lookup table for vars to be initialized}
   les  DI,destscr
+  cld
   mov  AH,backfore
   mov  AL,filler
   mov  CX,tfscrsizeinwords
-  cld
   rep  stosw
 @cleardone:
 End;
@@ -318,14 +321,13 @@ Much thanks to Richard Wilton for the idea and example code.
 
 Const
   horiz_timeout=6;
-  vb_chunksize=470; {empirically discovered (I adjusted manually until I
-  didn't see any more snow; this was on a true blue IBM PC/XT}
+  vb_chunksize=480; {empirically discovered on a stock IBM 5160}
 
 Asm
   cmp     tftableready,0   {we need this to get sizeinwords}
   je      @finalend        {Don't write into an unknown void without the lookup table}
   mov     CX, tfscrsizeinwords
-  mov     AL, PreventSnow
+  mov     AL, tfPreventSnow
   les     DI, destscr
   push    DS
   lds     SI, sourcescr
@@ -356,7 +358,7 @@ Asm
 
 {write during horizontal blanking intervals}
 @L03:
-  sti
+  sti                      {enable previous interrupt state}
   mov     cx,bx            {restore CX}
 @L04:
   lodsw                    {AL := character code, AH := attribute}
@@ -406,5 +408,7 @@ Asm
 End;
 
 Begin
-  tfastinit(80,25); {just in case the user forgets}
+  If Mem[$0000:$0449]=7
+    then tfscreenseg:=$b000
+    else tfscreenseg:=$b800;
 End.

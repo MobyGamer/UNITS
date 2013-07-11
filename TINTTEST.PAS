@@ -46,7 +46,7 @@ end;
 {$F-}
 
 begin
-  SetTimer(@MyHandler, 6000); {set our interrupt handler to fire at 6KHz
+  SetTimerHz(@MyHandler, 6000); {set our interrupt handler to fire at 6KHz
   BTW, 6KHz is about the practical limit for a 4.77MHz 8088 PC.  Special-case
   handlers and situations can go higher, but if you want the rest of the
   system to function normally without any special handling, stay below 6KHz.

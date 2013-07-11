@@ -1,10 +1,10 @@
 {$O+,F+}
-{$R-,S-,G-}
+{$R-,S-,G-,Q-}
 {
 Boring generic support routines, JL20041013.  My old generalfunctions unit
 of 17+ years was starting to creep me out (I code a lot better now than I
-did as a teenager) so I decided to start over. 
-Last updated: 20120803
+did as a teenager) so I decided to start over.
+Last updated: 20121028
 }
 
 unit support;
@@ -13,6 +13,7 @@ interface
 
 const
   HexNybble:array[0..15] of char='0123456789ABCDEF';
+  vidp:pointer=ptr($b800,0);
 
 var
   TicksSinceMidnight:longint ABSOLUTE $0040:$006C;
@@ -40,7 +41,7 @@ Function hex(l:longint):s12;
 Function hexword(w:word):s12;
 Procedure moveword(src,dst:pointer;size:word); {Built for speed, DOES NOT HANDLE OVERLAPPING BLOCKS AT ALL!}
 Procedure fillword(dst:pointer;size:word;filler:byte);
-Procedure FatalError(errnum:byte;s:s79);
+Procedure FatalError(errnum:byte;s:string);
 Function BuffersEqual(p1,p2:pointer;size:word):word; {compares two buffers; reports 0 if equal, or offset where not}
 Function p2l(p:pointer):longint; {converts an x86 16-bit seg:ofs pointer to a 20-bit linear offset}
 function l2p(l:longint):pointer; {converts a 20-bit linear offset to an x86 16-bit seg:ofs pointer}
@@ -66,7 +67,7 @@ function ticks2ms(l:longint):longint;
 Function ByteToHex(b:byte):str2; {converts byte to ascii hex equivalent}
 Function HexCharToByte(c:char):byte;
 Function HexStrToLong(s:string):longint;
-Function IntPadded(l:word;num:byte):s12; {returns value padded with num 0's}
+Function IntPadded(l:longint;num:byte;padc:char):s12; {returns value padded with num padchars}
 Procedure WaitFloppySpindown;
 procedure doswrite(s:string);
 procedure doswriteln(s:string);
@@ -76,6 +77,7 @@ Function SimpleMenu(title,m:string):byte;
 {Simple menu.
 If EXIT or anything above it is chosen, 0 is returned, signifying an exit.}
 Function InV86:boolean; {returns TRUE if we are already in protected mode}
+Function DosVer:word; {returns DOS version lo(major) hi(minor) number}
 
 implementation
 
@@ -85,8 +87,6 @@ var
   oldvideomode,oldvideopage:byte;
   screenp:pointer;
 
-const
-  vidp:pointer=ptr($b800,0);
 {end DOS screen preserve}
 
 Function DiskReady(Drive:char):boolean;
@@ -400,10 +400,19 @@ end;
 procedure fatalerror;
 begin
   asm
-    mov  ax,0003h
-    int  10h
+    {clrscr}
+    mov ax,0600h
+    mov bh,07
+    xor cx,cx
+    mov dx,184fh {mov dh,24; mov dl,79}
+    int 10h
+    {re-home cursor}
+    mov ah,2
+    xor bh,bh {page 0}
+    xor dx,dx
+    int 10h
   end;
-  writeln('Fatal error #',errnum,': ',s);
+  writeln('Fatal #',errnum,': ',s);
   halt(errnum);
 end;
 
@@ -713,12 +722,12 @@ BEGIN
   HexStrToLong := Num;                          { return value }
 END;
 
-Function IntPadded(l:word;num:byte):s12; {returns value padded with num 0's}
+Function IntPadded; {returns value padded with num 0's}
 Var
   s:s12;
 Begin
   str(l,s);
-  while byte(s[0])<num do s:='0'+s; {pad to num characters}
+  while byte(s[0])<num do s:=padc+s; {pad to num characters}
   IntPadded:=s;
 End;
 
@@ -885,4 +894,14 @@ asm
 @done:
 end;
 
+function DOSVer:word;assembler;
+asm
+  mov     ah,30h
+  int     21h     {al=maj, ah=min}
+end;
+
+begin
+  If Mem[$0000:$0449]=7
+    then vidp:=ptr($b000,0)
+    else vidp:=ptr($b800,0);
 end.

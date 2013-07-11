@@ -1,3 +1,4 @@
+{$Q-,R-,S-}
 program testfastwrite;
 {
 Tests the fastwrite unit and records execution times.
@@ -33,16 +34,19 @@ begin
     if upcase(readkeychar)<>'Y' then fatalerror(1,'Not worried about speed on a fast machine');
   end;
   ch:=#0;
-  scrp:=ptr($b800,0);
+  scrp:=vidp;
   getmem(hidden,80*25*2);
   tfastinit(80,25);
-  PreventSnow:=false;
+  tfPreventSnow:=false;
   tfastclrscr(scrp,$07,250); {250 = "ú", blue back, b=lightcyan fore}
   tfastclrscr(hidden,$1b,250); {250 = "ú", blue back, b=lightcyan fore}
+  s:='                                                         <--- Snow in this line?';
+  tfastwritexy(@s,hidden,0,0,$07);
+
   repeat
     if keypressed then begin
       while keypressed do ch:=readkeychar;
-      preventsnow:=not preventsnow;
+      tfpreventsnow:=not tfpreventsnow;
     end;
 
     s:='The sample string used in all tests is:';
@@ -52,59 +56,60 @@ begin
     for foo:=topexp to botexp do tfastwritexy(@s,hidden,b,foo,(foo+bar) AND 127);
     inc(bar);
 
-    _LZtimerOn;
+    _PZtimerOn;
     tfastwritexy(@s,hidden,b,5,bar and 127); {1 background, 7 foreground}
-    _LZtimerOff;
+    _PZtimerOff;
     s:='tfastwritexy execution time (hidden buffer): '
-       +inttostr(_LZtimerCount)+' æsec ('
-       +inttostr(_LZtimerCount div 1000)+' ms)  ';
-    tfastwritexy(@s,hidden,0,0,$17);
+       +inttostr(_PZtimerCount)+' æsec ('
+       +inttostr(_PZtimerCount div 1000)+' ms)  ';
+    tfastwritexy(@s,hidden,0,1,$17);
 
     s:='This is a test of the tfastwrite routine.'; b:=(tfmaxscrx shr 1)-(length(s) shr 1);
-    _LZTimerOn;
+    _PZtimerOn;
     tfastwritexy(@s,scrp,b,5,bar and 127); {1 background, 7 foreground}
-    _LZTimerOff;
+    _PZtimerOff;
     s:='tfastwritexy execution time (visible buffer): '
-       +inttostr(_LZTimerCount)+' æsec ('
-       +inttostr(_LZTimerCount div 1000)+' ms)  ';
-    tfastwritexy(@s,hidden,0,1,$17);
-    tfastwritexy(@s,scrp,0,1,$17);
+       +inttostr(_PZtimerCount)+' æsec ('
+       +inttostr(_PZtimerCount div 1000)+' ms)  ';
+    tfastwritexy(@s,hidden,0,2,$17);
+    tfastwritexy(@s,scrp,0,2,$17);
 
     {this is actually the most useful benchmark here - tests time it takes
     for all length strings}
     {$IFDEF COMPLETE}
     totalticks:=0;
     for counter:=tfmaxscrx downto 0 do begin
+      fillchar(s,81,80); {init string s}
       byte(s[0]):=counter;
-      _LZTimerOn;
-      tfastwritexy(@s,hidden,0,3,$1f);
-      _LZTimerOff;
-      inc(totalticks,_LZTimerCount);
+      _PZtimerOn;
+      tfastwritexy(@s,hidden,0,0,$0f);
+      _PZtimerOff;
+      inc(totalticks,_PZtimerCount);
     end;
     totalticks:=totalticks div (tfmaxscrx+1);
-    s:='Average write time for all length strings: '
+    s:='Average write time for all length strings (hidden buffer): '
        +inttostr(totalticks)+' æsec ('
        +inttostr(totalticks div 1000)+' ms)  ';
-    tfastwritexy(@s,hidden,0,3,$17);
+    tfastwritexy(@s,hidden,0,4,$17);
     {$ENDIF}
 
-    _LZTimerOn;
+    _PZtimerOn;
     tfastcopyscreen(hidden,scrp);
-    _LZTimerOff;
+    _PZtimerOff;
     s:='tfastcopyscreen execution time: '
-       +inttostr(_LZTimerCount)+' æsec ('
-       +inttostr(_LZTimerCount div 1000)+' ms), or about '
-       +inttostr(1000000 div _LZTimerCount)+'fps  ';
-    tfastwritexy(@s,scrp,0,2,$17);
-    tfastwritexy(@s,hidden,0,2,$17);
+       +inttostr(_PZtimerCount)+' æsec ('
+       +inttostr(_PZtimerCount div 1000)+' ms), or about '
+       +inttostr(1000000 div _PZtimerCount)+'fps  ';
+    tfastwritexy(@s,scrp,0,3,$17);
+    tfastwritexy(@s,hidden,0,3,$17);
 
     s:='Press ESC to exit or any other key to toggle the PreventSnow variable.';
     tfastwritexy(@s,hidden,0,23,$1f);
     s:='(Numbers vary due to where the display cycle is, and interrupt noise.)';
     tfastwritexy(@s,hidden,0,24,$1f);
-    if not PreventSnow
-      then s:='PreventSnow: Off'
-      else s:='PreventSnow: On ';
+    if not tfPreventSnow
+      then s:='tfPreventSnow: Off'
+      else s:='tfPreventSnow: On ';
     tfastwritexy(@s,hidden,0,5,$1a);
 
     s:='Alignment and'; tfastwritexy(@s,hidden,0,9,$1a);

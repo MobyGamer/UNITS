@@ -1,4 +1,4 @@
-{$O+,F+,R-,G-,S-,A+}
+{$R-,G-,S-,Q-,O+}
 
 unit CmdLin;
 (*
@@ -25,12 +25,6 @@ unit CmdLin;
       Jim Walsh      CIS:72571,173
 
       non_flag_param() debugged by trixter@oldskool.org 20060426
-      non_flag_count() added embedded string parsing by trixter 20111129
-
-      TO-DO:
-        - non_flag_param() needs support for embedded string skipping
-        - string_delims is clunky and should use __stringdelims instead
-
 
 *)
 
@@ -62,18 +56,18 @@ INTERFACE
 
 
 IMPLEMENTATION
+const
+  flag_delims   : Set of Char = ['/','-'];
+  no_of_string_delims = 3;
 type
   string_delim_type = Array[1..3] of record
-    start, stop : char
-  end;
-
+                                       start, stop : char
+                                     end;
 const
-  flag_delims    : Set of Char = ['/','-'];
-  __stringdelims : Set of Char = ['"',''''];
-  no_of_string_delims = 3;
   string_delims : string_delim_type = ((start:#39; stop:#39),
                                        (start:#34; stop:#34),
                                        (start:'['; stop:']'));
+
 
 function LowerCaseChar(c:char):char;
 begin
@@ -261,29 +255,12 @@ end;
     param_cnt:=ParamCount;
     result:=0;
     ti1:=0;
-    while ti1 < param_cnt do begin
-      inc(ti1);
-      ts1:=ParamStr(ti1);
-      if not (ts1[1] in flag_delims)
-        then inc(result)
-        else if length(ts1) > 2
-          then begin
-            if ts1[3] in __stringdelims
-              then while ti1 < param_cnt do begin {scan from beginning to end of string}
-                inc(ti1); {move to next command-line param}
-                ts1:=paramstr(ti1);
-                if ts1[length(ts1)] in __stringdelims then break; {found the end, exit}
-              end;
-          end;
-    end;
-
-    (*
     For ti1:=1 To param_cnt Do begin
       ts1:=ParamStr(ti1);
-      If Not(ts1[1] IN flag_delims)
-        then Inc(result);
+      If Not(ts1[1] IN flag_delims) Then begin
+        Inc(result);
+      end;
     end; {For}
-    *)
     Non_Flag_Count:=result;
   end;
 
