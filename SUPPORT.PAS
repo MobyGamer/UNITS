@@ -78,8 +78,13 @@ Function SimpleMenu(title,m:string):byte;
 If EXIT or anything above it is chosen, 0 is returned, signifying an exit.}
 Function InV86:boolean; {returns TRUE if we are already in protected mode}
 Function DosVer:word; {returns DOS version lo(major) hi(minor) number}
+Function curdate:s12;
+Function basename(ins:string):string; {returns filename without extension}
 
 implementation
+
+uses
+  DOS;
 
 {preserve DOS screen stuff}
 var
@@ -327,7 +332,6 @@ Begin
       s:=hexNybble[(l And $f)]+s;
       l:=l ShR 4;
     End;
-  {while byte(s[0])<8 do s:='0'+s;} {pad to 4 characters}
   hex:=s;
 End;
 
@@ -419,33 +423,47 @@ end;
 Function P2L(p: Pointer): LongInt; Assembler;
 {Converts an x86 16-bit seg:ofs pointer to a linear address}
 Asm
-   mov ax,word ptr [p+2]
+   mov ax,word ptr [p+2] {seg}
    mov dx,ax
-   mov cl,12
-   shr dx,cl
+   mov cl,12             {ssssssssssssssss:ssssssssssssssss}
+   shr dx,cl             {000000000000ssss:ssssssssssssssss}
    mov cl,4
-   shl ax,cl
-   add ax,word ptr [p]
-   adc ax,0
+   shl ax,cl             {000000000000ssss:ssssssssssss0000}
+   add ax,word ptr [p]   {000000000000ssss:oooooooooooooooo}
+   adc ax,0              {000000000000sssS:oooooooooooooooo}
 End;
 
 Function L2P(l: LongInt): Pointer; Assembler;
 {converts 20-bit linear offset into seg:ofs pointer}
 Asm
-   mov ax,word ptr [l]
    mov dx,word ptr [l+2]
+   mov ax,word ptr [l]
    mov bx,ax
-   and ax,0Fh
+   and ax,0Fh              {so that :AX returns only remainder}
    mov cl,4
-   shr bx,cl
+   shr bx,cl               {divide ofs by 16 to get quotient}
    mov cl,12
    shl dx,cl
    add dx,bx
 End;
 
+Function NormPtr(p: Pointer): Pointer; Assembler;
+{Normalizes an x86 16-bit seg:ofs pointer.}
+{  NormPtr:=l2p(p2l(p));}
+
+Asm
+   mov dx,word ptr [p+2] {seg}
+   mov ax,word ptr [p]   {ofs}
+   mov bx,ax             {bx=ofs}
+   and ax,0Fh            {ax=offset remainder}
+   mov cl,4
+   shr bx,cl             {bx=ofs div 16=num paragraphs}
+   add dx,bx             {increase seg by # of paragraphs}
+End;
+
 Function SubPtr(p:Pointer;d:LongInt):Pointer;
 Begin
-  SubPtr:=L2P(P2L(p)-d);
+  SubPtr:=L2P(P2L(p)-d)
 End;
 
 Function AddPtr(p:Pointer;d:LongInt):Pointer;
@@ -757,20 +775,6 @@ begin
   until (TicksSinceMidnight-l > 18);
 end;
 
-Function NormPtr(p: Pointer): Pointer; Assembler;
-{Normalizes an x86 16-bit seg:ofs pointer.}
-{  NormPtr:=l2p(p2l(p));}
-
-Asm
-   mov dx,word ptr [p+2] {seg}
-   mov ax,word ptr [p]   {ofs}
-   mov bx,ax             {bx=ofs}
-   and ax,$0F            {ax=offset remainder}
-   mov cl,4
-   shr bx,cl             {bx=ofs div 16=num paragraphs}
-   add dx,bx             {increase seg by # of paragraphs}
-End;
-
 Procedure FileToSTDOUT(filename:string);
 var
   f:text;
@@ -898,6 +902,35 @@ function DOSVer:word;assembler;
 asm
   mov     ah,30h
   int     21h     {al=maj, ah=min}
+end;
+
+function curdate:s12;
+var
+  h, m, s, hund : Word;
+
+  function LeadingZero(w : Word) : String;
+  var
+    s : String;
+  begin
+    Str(w:0,s);
+    if Length(s) = 1 then
+      s := '0' + s;
+    LeadingZero := s;
+  end;
+
+begin
+  GetTime(h,m,s,hund);
+  curdate:=LeadingZero(h)+':'+LeadingZero(m)+':'+LeadingZero(s)+'.'+LeadingZero(hund);
+end;
+
+Function basename(ins:string):string;
+{chops extension off of a filename}
+var
+  b:byte;
+begin
+  for b:=0 to 3 do if ins[length(ins)-b]='.'
+    then delete(ins,length(ins)-b,b+1);
+  basename:=ins;
 end;
 
 begin
