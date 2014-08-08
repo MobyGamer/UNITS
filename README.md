@@ -1,2 +1,2 @@
 Various Turbo Pascal support libraries required to compile some projects of
-mine hosted at GITHUB.
+mine hosted at github.
