@@ -75,7 +75,7 @@ begin
     writeln('Fatal runtime error ',ExitCode,
             ' at ',hexword(seg(ErrorAddr^)),
             ':',hexword(ofs(ErrorAddr^)),
-            ' "',Message,'"');
+            ': ',Message);
     ErrorAddr:=nil;
     ExitCode:=1;
   end;
