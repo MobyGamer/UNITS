@@ -328,7 +328,7 @@ begin
   if (lastSpeakerFreq<>newFreq) and (newfreq>18) then begin
     lastSpeakerFreq:=newFreq;
     divisor:=PITFreq div newfreq;
-	  asm
+    asm
       mov   dx,$42 {channel 2}
       mov   ax,divisor
       pushf        {save flags because we don't know who/what is calling us}

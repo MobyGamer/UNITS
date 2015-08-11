@@ -14,6 +14,7 @@ interface
 const
   HexNybble:array[0..15] of char='0123456789ABCDEF';
   vidp:pointer=ptr($b800,0);
+  maxbufsize=$FFFF+1-16;
 
 var
   TicksSinceMidnight:longint ABSOLUTE $0040:$006C;
@@ -80,6 +81,7 @@ Function InV86:boolean; {returns TRUE if we are already in protected mode}
 Function DosVer:word; {returns DOS version lo(major) hi(minor) number}
 Function curdate:s12;
 Function basename(ins:string):string; {returns filename without extension}
+Procedure tSeek(Var f : Text; n : LongInt);
 
 implementation
 
@@ -146,29 +148,27 @@ end;  { diskready }
 Function EXEsize(fname:string):longint;
 Type
   t_size = Record
-    mz : Array [1..2] of Char;
+    mz:Array [1..2] of Char;
     remainder,
-    pages : Word;
+    pages:Word;
   end;
 
 Var
-  f  : File of t_size;
-  sz : t_size;
+  f:File of t_size;
+  sz:t_size;
 
 begin
   assign(f,fname);
   {$i-}
   reset(f);
   {$i+}   { io checking should be off }
-  if (ioresult <> 0) then
-    exesize:= 0
-  else
-  begin
-    read(f,sz);
-    close(f);
-    With sz do
-      exesize := remainder + (pred(pages) * 512);
-  end;
+  if (ioresult <> 0)
+    then exesize:= 0
+    else begin
+      read(f,sz);
+      close(f);
+      With sz do exesize := remainder + (pred(pages) * 512);
+    end;
 end;
 
 Function upstring(s:string):string; assembler;
@@ -631,6 +631,8 @@ begin
     else gcd:=gcd(b,a mod b)
 end;
 
+{!! should probably convert this to http://en.wikipedia.org/wiki/Binary_GCD_algorithm at some point}
+
 function gcd_i(a,b:longint):longint;
 var
   t:longint;
@@ -932,6 +934,56 @@ begin
     then delete(ins,length(ins)-b,b+1);
   basename:=ins;
 end;
+
+Procedure tSeek(Var f : Text; n : LongInt); Assembler;
+{MARCO MILTENBURG's procedure for seeking in a text file}
+Asm
+  push  DS
+  push  BP
+
+  lds   SI, f
+  lodsw                                 { handle }
+  mov   BX, AX
+
+  mov   CX, Word ptr [BP+8]
+  mov   DX, Word ptr [BP+6]
+
+  mov   AX, 4200h                       {AL = 2, AH = 42}
+  int   21h
+
+  les   DI, f
+  mov   AX, DI
+  add   AX, 8
+  mov   DI, AX
+
+  lodsw                                 { mode }
+  lodsw                                 { bufsize }
+  mov   CX, AX                          { CX = number of Bytes to read }
+  lodsw                                 { private }
+  lodsw                                 { bufpos  }
+  lodsw                                 { bufend  }
+  lodsw                                 { offset of Pointer to Textbuf }
+  mov   DX, AX                          { DX = offset of Textbuf }
+  lodsw
+  mov   DS, AX                          { DS = segment of Textbuf }
+  mov   AH, 3Fh
+  int   21h
+  push  AX                              { Save AX on stack }
+
+  les   DI, f                           { ES:DI points to f }
+  mov   AX, DI                          { Move Pointer to position 8 }
+  add   AX, 8
+  mov   DI, AX
+
+  mov   AX, 0                           { Bufpos = 0 }
+  stosw
+  pop   AX                              { Bufend = number of Bytes read }
+  stosw
+
+  pop   BP
+  pop   DS
+end; { tSeek }
+
 
 begin
   If Mem[$0000:$0449]=7
