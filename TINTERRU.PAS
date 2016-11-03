@@ -1,10 +1,10 @@
-{$F+} { Force far mode, a good idea when mucking around with interrupts }
+{$F+,O-}
 {$R-,S-} {must NOT have stack checking!}
 {
-Trixter's interrupt and timer unit.  Version 0.2 20080326
+Trixter's interrupt and timer unit.  Version 0.4 20160424
 This unit wouldn't be possible without the hard work and writing of:
   Mark Feldman
-  Kris Heidenstrom
+  Kris Heidenstrom (RIP)
   Klaus Hartnegg
 Thank you gentlemen!
 
@@ -12,6 +12,8 @@ See tinttest.pas for example usage.
 
 Version 0.3 20130503 added PCjr vint stuff
 }
+
+{$DEFINE HIDDEN} {define if CGAVINT needs to start in vertical retrace only}
 
 unit TInterrupts;
 
@@ -56,6 +58,7 @@ const
 had, it'll be intialised to 0. The Chan0Counter variable will hold the new
 channel 0 counter value. We'll also be adding this number to PITcycles
 every time our handler is called.}
+
 
 type
   {Thanks to Jason Burgon for the idea: this record allows us to get away
@@ -177,9 +180,9 @@ var
   modecmd,lobyte,hibyte,chanport:byte;
 begin
   {check for valid input allowed:
-    only channels 0 and 2 (1 is for DRAM REFRESH, do NOT touch!)
-    only accessmodes 1 through 3 (0 is not an access mode)}
-	if not (channel in [0,2]) or not (accessMode in [1..3]) then exit;
+  only channels 0 and 2 (1 is for DRAM REFRESH, do NOT touch!)
+  only accessmodes 1 through 3 (0 is not an access mode)}
+  if not (channel in [0,2]) or not (accessMode in [1..3]) then exit;
   {precalc how we're going to set the channel, so we don't tie up too much
   time with interrupts turned off}
   modecmd:=(channel shl 6) + (accessMode shl 4) + ((mode AND $7) shl 1); {bit 0 always 0 for 16-bit mode}
@@ -187,11 +190,11 @@ begin
   hibyte:=hi(divisor);
   chanport:=chan0base+channel;
   {must make these changes atomic, so disable interrupts before starting}
-	asm pushf; cli end;
-	port[CTCModeCommandReg]:=modecmd;
-	port[chanport]:=lobyte; (* Reload reg lobyte *)
-	port[chanport]:=hibyte; (* Reload reg hibyte *)
-	asm popf end;
+  asm pushf; cli end;
+  port[CTCModeCommandReg]:=modecmd;
+  port[chanport]:=lobyte;   (* Reload reg lobyte *)
+  port[chanport]:=hibyte;   (* Reload reg hibyte *)
+  asm popf end;
 end;
 
 Procedure InitChannelCGAVINT(channel,accessMode,mode:byte;divisor:word);
@@ -220,6 +223,7 @@ begin
     mov   cx,199
     pushf
     cli
+    {$IFNDEF HIDDEN}
   @WDR:
     in    al,dx
     test  al,bl
@@ -235,6 +239,16 @@ begin
     test  al,ah
     jz    @hor2 {wait until horizontally retracing}
     loop  @hor1 {loop 199 more times}
+    {$ELSE}
+  @WDR: {wait during retrace, because we don't know where we are in the cycle}
+    in    al,dx
+    test  al,bl {if our bit is 1, then we're already in retrace; we missed it}
+    jnz   @WDR  {jump if 1 (not 0) = keep looping as long as we're retracing}
+  @WDD: {wait for display to be over}
+    in    al,dx
+    test  al,bl
+    jz    @WDD  {loop until we aren't drawing any more (ie. retracing)}
+    {$ENDIF}
 
     {set new rate}
     mov     al,modecmd
@@ -245,7 +259,7 @@ begin
     out     dx,al
     mov     al,hibyte
     out     dx,al
-	  popf
+    popf
   end;
 end;
 
@@ -308,11 +322,11 @@ begin
   if (lastSpeakerFreq<>newFreq) and (newfreq>18) then begin
     lastSpeakerFreq:=newFreq;
     {Set CTC Channel 2, 16-bit, mode 3, squarewave frequency}
-	  InitChannel(2, 3, 3, PITFreq div newfreq);
-	  asm pushf; cli end;
+    InitChannel(2, 3, 3, PITFreq div newfreq);
+    asm pushf; cli end;
     {Enable speaker and tie input pin to CTC Chan 2 by setting bits 1 and 0}
-	  port[$61]:=(port[$61] OR $3);
-	  asm popf end;
+    port[$61]:=(port[$61] OR $3);
+    asm popf end;
   end;
 end;
 
@@ -343,10 +357,10 @@ end;
 
 Procedure Chan2SquarewaveOff;
 begin
-	asm pushf; cli end;
+  asm pushf; cli end;
   {Disable speaker and CTC Chan 2 tie by clearing bits 1 and 0}
-	port[$61]:=(port[$61] AND (NOT $3));
-	asm popf end;
+  port[$61]:=(port[$61] AND (NOT $3));
+  asm popf end;
   lastSpeakerFreq:=$ffff; {set to some value the user will never enter}
 end;
 

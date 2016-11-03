@@ -27,7 +27,6 @@ begin
   {END DOING WHATEVER WE WANT}
 
   {$IFNDEF EVILINT} {We want to be nice, and will maintain the BIOS interrupt}
-
   inc(PITCycles,Chan0Counter); {Keep track of how many PIT cycles have gone by}
   if longrec(PITCycles).hi <> 0 then begin {Did we roll over?  Is it time to call the 18.2Hz BIOS handler?}
     longrec(PITCycles).hi:=0; {Update our PIT cycles counter}
@@ -36,11 +35,8 @@ begin
   end
   else
     Port[$20] := $20; {send EndOfInterrupt to the PIC to ackn. the interrupt}
-
   {$ELSE}
-
   Port[$20] := $20; {Just acknowledge the interrupt, oldint8 be damned}
-
   {$ENDIF}
 end;
 {$F-}

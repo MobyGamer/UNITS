@@ -4,7 +4,7 @@
 Boring generic support routines, JL20041013.  My old generalfunctions unit
 of 17+ years was starting to creep me out (I code a lot better now than I
 did as a teenager) so I decided to start over.
-Last updated: 20121028
+Last updated: 20160430
 }
 
 unit support;
@@ -35,6 +35,7 @@ Function NumToExt(w:word):s12;
 Function ReadKeyChar:Char;
 Function KeyPressed:Boolean;
 Function upstring(s:string):string;
+Function downstring(s:string):string;
 Function upchar(c:char):char;
 Function EXEsize(fname:string):longint;
 Function DiskReady(Drive:char):boolean;
@@ -190,6 +191,33 @@ asm
   cmp   al,'z'
   ja    @noconvert
   sub   al,20h
+@noconvert:
+  stosb
+  loop  @upstringloop
+
+@done:
+  pop   ds
+end;
+
+Function downstring(s:string):string; assembler;
+asm
+  push  ds
+  cld
+  lds   si,s
+  les   di,@result
+  lodsb
+  stosb
+  xor   ah,ah
+  xchg  ax,cx
+  jcxz  @done
+
+@upstringloop:
+  lodsb
+  cmp   al,'A'
+  jb    @noconvert
+  cmp   al,'Z'
+  ja    @noconvert
+  add   al,20h
 @noconvert:
   stosb
   loop  @upstringloop

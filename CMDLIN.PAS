@@ -1,4 +1,4 @@
-{$R-,G-,S-,Q-,O+}
+{$R-,G-,S-,Q-,O+,F+}
 
 unit CmdLin;
 (*
@@ -19,8 +19,7 @@ unit CmdLin;
       This is completely public domain, all I want in return for your use
       is appreciation.  If you improve this unit, please let me know.
       Some possible improvements would be to allow embedded strings in
-      non-flag parameters.  I haven't done this because I haven't needed
-      it.
+      non-flag parameters.  I haven't done this because I haven't needed it.
 
       Jim Walsh      CIS:72571,173
 
