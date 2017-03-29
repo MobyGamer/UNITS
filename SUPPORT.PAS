@@ -1,37 +1,50 @@
 {$O+,F+}
 {$R-,S-,G-,Q-}
 {
-Boring generic support routines, JL20041013.  My old generalfunctions unit
-of 17+ years was starting to creep me out (I code a lot better now than I
-did as a teenager) so I decided to start over.
-Last updated: 20160430
+Generic support routines, JL19871013.
+Last updated: 20170224
 }
+
+{{$DEFINE DEBUG}
 
 unit support;
 
 interface
 
+uses
+  DOS;
+
 const
   HexNybble:array[0..15] of char='0123456789ABCDEF';
   vidp:pointer=ptr($b800,0);
-  maxbufsize=$FFFF+1-16;
-
-var
-  TicksSinceMidnight:longint ABSOLUTE $0040:$006C;
-  DriveMotorStatus:Byte ABSOLUTE $0040:$003F;
+  maxbufsize=$10000-$10;
 
 type
   s79=string[79];
   s12=string[12];
   str2=string[2];
+  s16=string[16];
+  screenParamsType=record
+    cursorsize,cursorpos:word;
+    videomode,videopage,
+    videorows,videocols:byte;
+  end;
+
+var
+  TicksSinceMidnight:longint ABSOLUTE $0040:$006C;
+  DriveMotorStatus:Byte ABSOLUTE $0040:$003F;
+  oldScreenParams:screenParamsType;
 
 Function FileExists(filename:String):Boolean;
+Function DirExists(dirname:String):Boolean;
 Function SizeOfFile(filename:string):longint;
+Procedure MkDirCDir(Target : String);
 Function IntToStr(I:LongInt):s12;
 Function StrToInt(s:s12):LongInt;
 Function RealToStr(r:real):string;
 Function StrToReal(s:s79):real;
 Function NumToExt(w:word):s12;
+Function boolToStr(b:boolean):s12;
 Function ReadKeyChar:Char;
 Function KeyPressed:Boolean;
 Function upstring(s:string):string;
@@ -52,7 +65,7 @@ Function AddPtr(p:Pointer;d:LongInt):Pointer;
 Function NormPtr(p:pointer):pointer; {Normalizes an x86 16-bit seg:ofs pointer}
 Function split(line:string;delimiter:char;position:byte):string;
 Function GetTimer:word;
-Procedure PreserveDOSScreen;
+Procedure RecordDOSScreen;
 Procedure RestoreDOSScreen;
 Procedure CursorON;
 Procedure CursorOFF(page:byte);
@@ -83,16 +96,15 @@ Function DosVer:word; {returns DOS version lo(major) hi(minor) number}
 Function curdate:s12;
 Function basename(ins:string):string; {returns filename without extension}
 Procedure tSeek(Var f : Text; n : LongInt);
+Function StdPath(p:PathStr):PathStr;
+Procedure strReplace(var _str:string;pattern,value:string);
+function byteswap(var a,b:byte):byte;
+function stdDate:s16;
 
 implementation
 
-uses
-  DOS;
-
 {preserve DOS screen stuff}
 var
-  oldcursorsize,oldcursorpos:word;
-  oldvideomode,oldvideopage:byte;
   screenp:pointer;
 
 {end DOS screen preserve}
@@ -237,26 +249,12 @@ asm
 @noconvert:
 end;
 
-(*Function upstring(name:string):string;
-var
-  loop:byte;
-begin
-  for loop := 1 to Length(name) do
-    upstring[loop] := UpCase(name[loop]);
-  upstring[0]:=name[0];
-end;*)
 
-Function FileExists(filename:String):Boolean;
-Var
-  f:File;
-Begin
-  Assign(f,filename);
-  {$I-}
-  Reset(f);
-  Close(f); {need this or you run out of file handles calling me repeatedly!}
-  {$I+}
-  FileExists:=(IOResult = 0);
-End;
+Function FileExists(filename:string):boolean;
+begin
+  fileExists := fSearch(filename, '') <> '';
+end;
+
 
 Function SizeOfFile(filename:string):longint;
 Var
@@ -431,20 +429,9 @@ end;
 
 procedure fatalerror;
 begin
-  asm
-    {clrscr}
-    mov ax,0600h
-    mov bh,07
-    xor cx,cx
-    mov dx,184fh {mov dh,24; mov dl,79}
-    int 10h
-    {re-home cursor}
-    mov ah,2
-    xor bh,bh {page 0}
-    xor dx,dx
-    int 10h
-  end;
-  writeln('Fatal #',errnum,': ',s);
+  RestoreDOSScreen;
+  {writeln('Fatal (',errnum,'): ',s);}
+  writeln('Fatal error: ',s);
   halt(errnum);
 end;
 
@@ -554,7 +541,7 @@ asm
   mov ah,3
   mov bh,page
   int 10h
-  mov oldcursorsize,cx
+  mov oldScreenParams.cursorsize,cx
   mov ah,1
   mov cx,2000h
   int 10h
@@ -564,7 +551,7 @@ Procedure CursorON;assembler;
 {this is meant to be called after a CursorOFF, otherwise results unpredictable!}
 asm
   mov ah,1
-  mov cx,oldcursorsize
+  mov cx,oldScreenParams.cursorsize
   int 10h
 end;
 
@@ -577,22 +564,42 @@ asm
   int 10h
 end;
 
-Procedure PreserveDOSScreen;
+Procedure RecordDOSScreen;
 begin
-  getmem(screenp,80*25*2);
-  moveword(vidp,screenp,80*25*2);
-  {first get existing cursor, then set it to disappear}
   asm
-    {get old video mode and page}
+    {get existing video mode and page}
     mov ah,0fh
     int 10h
-    mov oldvideomode,al
-    mov oldvideopage,bh
+    mov oldScreenParams.videomode,al
+    mov oldScreenParams.videopage,bh
+    mov oldScreenParams.VideoCols,ah
+    {
+    Number of rows not returned by BIOS.  Have to calc number of rows from:
+        40:4A	word	Number of screen columns
+        40:4C	word	Size of current video regen buffer in bytes
+        40:84	byte	Rows on the screen (less 1, EGA+)
+
+    Try to get from 40:84 first.  If early BIOS has that empty, then calc
+    it based on the info it does give us.
+    }
+    mov ax,40h
+    mov es,ax
+    mov al,es:[84h]
+    cmp al,0                            {our BIOS new enough to populate this?}
+    jne @newbios                        {if so, use it}
+    mov bx,es:[4ah]                     {if not, calc ourselves}
+    mov ax,es:[4ch]
+    shr ax,1
+    div bl
+    dec al
+@newbios:
+    inc al
+    mov oldScreenParams.videoRows,al
     {get cursor size and position}
     mov ah,3
     int 10h
-    mov oldcursorsize,cx
-    mov oldcursorpos,dx
+    mov oldScreenParams.cursorsize,cx
+    mov oldScreenParams.cursorpos,dx
   end;
 end;
 
@@ -601,21 +608,18 @@ begin
   asm
     {restore old video mode}
     mov ah,00
-    mov al,oldvideomode
+    mov al,oldScreenParams.videomode
     int 10h
     {put cursor back to old location}
     mov ah,2
-    mov bh,oldvideopage
-    mov dx,oldcursorpos
+    mov bh,oldScreenParams.videopage
+    mov dx,oldScreenParams.cursorpos
     int 10h
     {put cursor back to old size}
     mov ah,1
-    mov cx,oldcursorsize
+    mov cx,oldScreenParams.cursorsize
     int 10h
   end;
-  {restore screen data}
-  moveword(screenp,vidp,80*25*2);
-  freemem(screenp,80*25*2);
 end;
 
 procedure SlamString80x25(x,y:integer;s:string;attr:byte);assembler;
@@ -833,7 +837,7 @@ asm
   lodsb
   mov     dl,al           {ah=02, dl=character to output}
   int     21h             {do it}
-  loop @L1
+  loop    @L1
 @exit:
   pop     ds
 end;
@@ -891,8 +895,27 @@ ASM
 end;
 
 Function SimpleMenu(title,m:string):byte;
-{Simple menu.
-If EXIT or anything above it is chosen, 0 is returned, signifying an exit.}
+(*
+Simple menu.
+If EXIT or anything above it is chosen, 0 is returned, signifying an exit.
+
+Here is example code on how to use simplemenu:
+
+  repeat
+    choice:=SimpleMenu('Main Menu',
+    'Display System List~Import Result File~Save Database~Export to .CSV');
+    case choice of
+      1:PrintSystemList(Systems);
+      2:begin
+          write('File(s) to import (wildcards ok): ');
+          readln(temps);
+        end;
+      3:SaveDatabase(Systems);
+      4:SaveDatabaseCSV(Systems);
+    end;
+  until choice=0;
+*)
+
 var
   b:byte; curmax:byte;
 begin
@@ -1012,9 +1035,154 @@ Asm
   pop   DS
 end; { tSeek }
 
+function DirExists(dirname:string):boolean;
+var
+  f:file;
+  Attr:word;
+begin
+  {truncate trailing slashes}
+  while dirname[length(dirname)] = '\' do dec(dirname[0]);
+  {add directory modifier to truncated dirname}
+  dirname:=dirname+ '\.';
+  {try to get its attributes and report status}
+  assign(f,dirname);
+  getfattr(f,Attr);
+  DirExists := ((Attr and Directory) = Directory );
+end;
+
+Procedure MkDirCDir(Target : String);
+{ Purpose:      - Make directories where they don't exist               }
+{                 ie. MkDirCDir('D:\HI.ZZZ\GEEKS\2JKD98');              }
+{ Useful notes: - seems to handles even directories With extentions     }
+{                 (i.e. DIRDIR.YYY)                                     }
+{               - there are some defaults that have been set up :-      }
+{                 change if needed                                      }
+{               - doesn't check to see how legal the required directory }
+{                 is (i.e. spaces, colon in the wrong place, etc.)      }
+{ (original public-domain code's author unknown, enhancements by JL)    }
+
+Var
+  Slash : Array[1..(122 div 2)] of byte;
+  i,
+  count   : Integer;
+  dir,
+  home,
+  tempdir,
+  OurDir : String;
 
 begin
-  If Mem[$0000:$0449]=7
-    then vidp:=ptr($b000,0)
-    else vidp:=ptr($b800,0);
+  {Don't make a directory structure that already exists}
+  if DirExists(target)
+    then exit;
+
+  GetDir(0,OurDir); { because we'll use CHDIR to confirm directories }
+
+  { sample directory below to make }
+  Dir := Target;
+  { add slash at end if not given }
+  if Dir[Length(Dir)] <> '\' then
+    Dir := Dir + '\';
+  { if colon where normally is change to that drive }
+  if Dir[2] = ':' then begin
+    {$IFDEF DEBUG} writeln('** Changing to drive of ',dir); {$ENDIF}
+    ChDir(Copy(Dir, 1, 2))
+  end else
+  { assume current drive (and directory) }
+  begin
+    GetDir(0, Home);
+    if (Dir[1] = '\') then
+      Dir := Home + Dir
+    else
+      Dir := Home + '\' + Dir;
+  end;
+
+  {dumb fixup for if we are trying to do this in the root directory of a drive}
+  if dir[4]='\' then delete(dir,4,1);
+
+  Count := 0;
+  { search directory For slashed and Record them }
+  For i := 1 to Length(Dir) do
+  begin
+    if Dir[i] = '\' then
+    begin
+      Inc(Count);
+      Slash[Count] := i;
+    end;
+  end;
+  { For each step of the way, change to the directory }
+  { if get error, assume it doesn't exist - make it }
+  { then change to it }
+  For i := 2 to Count do
+  begin
+    TempDir := Copy(Dir, 1, Slash[i] - 1);
+    {$I-}
+    ChDir(TempDir);
+    if IOResult <> 0 then
+    begin
+      {$IFDEF DEBUG} writeln('** Making ',tempdir); {$ENDIF}
+      MkDir(TempDir);
+      {$IFDEF DEBUG} writeln('** Changing to ',tempdir); {$ENDIF}
+      ChDir(TempDir);
+    end;
+  end;
+
+  {$IFDEF DEBUG} writeln('** Changing to ',ourdir); {$ENDIF}
+  ChDir(OurDir);  { log back into our starting directory }
+end;
+
+function StdPath(p:PathStr):PathStr;
+{Ensure paths contain a trailing backslash}
+begin
+  StdPath:=p;
+  if (p<>'') and (p[length(p)]<>'\')
+    then StdPath:=p+'\';
+end;
+
+Function boolToStr(b:boolean):s12;
+begin
+  if b
+    then boolToStr:='TRUE'
+    else boolToStr:='FALSE';
+end;
+
+Procedure strReplace(var _str:string;pattern,value:string);
+var
+  found:byte;
+begin
+  while pos(pattern,_str)<>0 do begin
+    found:=pos(pattern,_str);
+    delete(_str,found,length(pattern));
+    insert(value,_str,found);
+  end;
+end;
+
+function byteswap(var a,b:byte):byte;
+var
+  t:byte;
+begin
+  t:=a;
+  a:=b;
+  b:=t;
+end;
+
+function stdDate:s16;
+var
+  y,m,d,doy,hr,mi,se,s1:word;
+  s:s16;
+begin
+  getdate(y,m,d,doy);
+  s:=inttostr(y);
+  if m<10 then s:=s+'0'; s:=s+inttostr(m);
+  if d<10 then s:=s+'0'; s:=s+inttostr(d);
+  gettime(hr,mi,se,s1);
+  if hr<10 then s:=s+'0'; s:=s+inttostr(hr);
+  if mi<10 then s:=s+'0'; s:=s+inttostr(mi);
+  if se<10 then s:=s+'0'; s:=s+inttostr(se);
+  if s1<10 then s:=s+'0'; s:=s+inttostr(s1);
+  stdDate:=s;
+end;
+
+begin
+  If Mem[$0000:$0449]=7 then vidp:=ptr($b000,0);
+  RecordDOSScreen;
 end.
