@@ -44,7 +44,7 @@ Function StrToInt(s:s12):LongInt;
 Function RealToStr(r:real):string;
 Function StrToReal(s:s79):real;
 Function NumToExt(w:word):s12;
-Function boolToStr(b:boolean):s12;
+Function boolToStr(b:boolean;ys,ns:s12):s12;
 Function ReadKeyChar:Char;
 Function KeyPressed:Boolean;
 Function upstring(s:string):string;
@@ -83,6 +83,8 @@ Function ByteToHex(b:byte):str2; {converts byte to ascii hex equivalent}
 Function HexCharToByte(c:char):byte;
 Function HexStrToLong(s:string):longint;
 Function IntPadded(l:longint;num:byte;padc:char):s12; {returns value padded with num padchars}
+procedure StrPadAfter(var str:OpenString;b:byte);
+{Pads a string with nulls after position b}
 Procedure WaitFloppySpindown;
 procedure doswrite(s:string);
 procedure doswriteln(s:string);
@@ -1131,18 +1133,21 @@ begin
 end;
 
 function StdPath(p:PathStr):PathStr;
-{Ensure paths contain a trailing backslash}
+{Ensure paths contain a trailing backslash.
+Also ensure there are no double-backslashes.}
 begin
-  StdPath:=p;
+  while pos('\\',p)<>0 do
+    delete(p,pos('\\',p),1);
   if (p<>'') and (p[length(p)]<>'\')
-    then StdPath:=p+'\';
+    then p:=p+'\';
+  StdPath:=p;
 end;
 
-Function boolToStr(b:boolean):s12;
+Function boolToStr(b:boolean;ys,ns:s12):s12;
 begin
-  if b
-    then boolToStr:='TRUE'
-    else boolToStr:='FALSE';
+  if ys='' then ys:='TRUE';
+  if ns='' then ys:='FALSE';
+  if b then boolToStr:=ys else boolToStr:=ns;
 end;
 
 Procedure strReplace(var _str:string;pattern,value:string);
@@ -1181,6 +1186,26 @@ begin
   if s1<10 then s:=s+'0'; s:=s+inttostr(s1);
   stdDate:=s;
 end;
+
+procedure StrPadAfter(var str:OpenString;b:byte); assembler;
+{Pads a string with nulls after position b}
+asm
+        les     di,str                  {get location of temp string}
+        xor     ax,ax
+        mov     al,b                    {al=position to start nulling}
+        xor     cx,cx
+        mov     cl,es:[di]              {cx=length of string}
+        sub     cx,ax                   {cx=how many nulls to write}
+        inc     ax
+        add     di,ax                   {es:di=starting point for nulls}
+        xor     ax,ax
+        shr     cx,1
+        rep     stosw
+        adc     cx,0
+        rep     stosb
+end;
+
+
 
 begin
   If Mem[$0000:$0449]=7 then vidp:=ptr($b000,0);
