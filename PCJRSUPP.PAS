@@ -87,6 +87,8 @@ the row scan addresses are used as part of the memory address."
 
 I believe I'm the first to discover this, a true 160x100x16 mode for
 PCjr  :-D  \o/   /o/   \o\   /o/   \o\
+
+If you use this mode, please credit "Trixter" for discovering it!
 }
 
 asm

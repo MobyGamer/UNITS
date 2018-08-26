@@ -13,7 +13,8 @@ Var
 
 Begin
   new(mykeyb,init);
-  PreserveDOSScreen;
+  {PreserveDOSScreen;}
+  RecordDOSScreen;
 
   writeln('Press ENTER to hook keyboard int or any other key to print info');
   repeat
@@ -23,7 +24,7 @@ Begin
                   ' ASCII: ',lastkeypressed.ascii,
                   ' flags: ',lastkeypressed.flags,
                   '(',lastkeypressed.keylabel,')',#32:20);
-      end else write(#13,char(random(4)+32));
+      end {else write(#13,char(random(4)+32))};
     end;
   until mykeyb^.lastkeypressed.ASCII=13;
 
@@ -32,7 +33,7 @@ Begin
     int 10h
   end;
   tfastinit(40,25);
-  PreventSnow:=false;
+  tfPreventSnow:=false;
   mykeyb^.HookInterrupt;
 
   While Not mykeyb^.ScanCodes^[1{kbd_escape}] Do Begin

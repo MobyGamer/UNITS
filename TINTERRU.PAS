@@ -20,9 +20,10 @@ unit TInterrupts;
 interface
 
 const
-  sysclockfreq=14.31818 * 1000000; {system clock}
+  sysclockfreq=(315/22) * 1000000; {system clock derived from NTSC 14.318182 MHz }
   PITFreq=round(sysclockfreq / 12); {Programmable Interrupt Timer frequency, should be $1234de}
-  usecPerTick=1000000 / PITFreq;
+  usecPerTick=1000000 / PITFreq; {# of microseconds per system tick}
+  CGAFrameCycles=(912*262) div 12; {# of PIT cycles per CGA display frame}
   SystemTimerInt=8;
   CTCModeCommandReg=$43; {write only; reads are ignored}
 
@@ -295,7 +296,7 @@ procedure SetTimerCGAVINT(TimerHandler : pointer);
 begin
   { Do some initialization }
   PITcycles := 0;
-  Chan0Counter := 912*262 div 12;
+  Chan0Counter := CGAFrameCycles;
 
   { Store the current BIOS handler and set up our own }
   GetIntVec(SystemTimerInt, @BIOSTimerHandler);

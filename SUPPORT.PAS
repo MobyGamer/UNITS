@@ -2,7 +2,7 @@
 {$R-,S-,G-,Q-}
 {
 Generic support routines, JL19871013.
-Last updated: 20170224
+Last updated: 20180713
 }
 
 {{$DEFINE DEBUG}
@@ -102,6 +102,7 @@ Function StdPath(p:PathStr):PathStr;
 Procedure strReplace(var _str:string;pattern,value:string);
 function byteswap(var a,b:byte):byte;
 function stdDate:s16;
+Function clustsize (drive : Byte) : Word;
 
 implementation
 
@@ -364,17 +365,12 @@ Begin
 End;
 
 Function hexword;
-Var
-  s:S12;
+var
+  s:s12;
 Begin
-  s:='';
-  If w=0
-    Then s:='0'
-    Else While w<>0 Do Begin
-      s:=hexNybble[(w And $f)]+s;
-      w:=w ShR 4;
-    End;
-  while byte(s[0])<4 do s:='0'+s; {pad to 4 characters}
+  s:=hex(w);
+  while byte(s[0])<4 do
+    s:='0'+s; {pad to 4 characters}
   hexword:=s;
 End;
 
@@ -1205,6 +1201,16 @@ asm
         rep     stosb
 end;
 
+Function clustsize (drive : Byte) : Word;
+Var
+  regs : Registers;
+begin
+  regs.cx := 0;         {set For error-checking just to be sure}
+  regs.ax := $3600;     {get free space}
+  regs.dx := drive;     {0=current, 1=a:, 2=b:, etc.}
+  msDos (regs);
+  clustsize := regs.ax * regs.cx;      {cluster size!}
+end;
 
 
 begin
