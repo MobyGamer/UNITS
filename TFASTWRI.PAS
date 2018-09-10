@@ -29,10 +29,16 @@ opcodes when possible... etc.  I have tried to note this in the code but
 ask me if something seems weird.
 
 trixter@oldskool.org, JL20060318
+
 Code revised JL20121013:
   + Wrung a hair more speed out of it, can now copy an 80x25 screen
   in < 50ms with snow checking on
   + added MDA support, and won't check for snow on MDAs
+
+Code revised JL20130627:
+  - Adjusted copyscreen chunksize to avoid single scanline character of snow
+  + Added more MDA speedups
+  + Added write/writeln functionality
 }
 
 Interface
@@ -43,7 +49,6 @@ Const
 var
   tfMaxScrX,tfMaxScrY:byte;
   tfScrSizeInWords:word;
-  tfScreenSeg:word;
 
 Procedure tfastinit(X,Y:Word);
 {Must be called before using the unit; it sets up a lookup table.  This is
@@ -71,6 +76,15 @@ Procedure tfastcopyscreen(sourcescr,destscr:Pointer);
 {Copies a hidden screen to visible screen ram.  *This procedure honors the
 PreventSnow variable*.}
 
+{These next few implement a "set and forget" write/writeln clone.
+Once you set the params, tfastwriteln will do what you expect it to do.}
+
+Procedure tfastsetpos(x,y:word);
+Procedure tfastsetcolor(b:byte);
+Procedure tfastsetdest(p:pointer);
+Procedure tfastwrite_(s:string);
+Procedure tfastwriteln(s:string);
+
 Implementation
 
 Uses
@@ -81,6 +95,12 @@ Const
   tftableready:Boolean=False;
   maxscrlines=16384 div (80*2);
   maxscrcols=132;  {for vesa, although I've gotten 90x30 to work on stock CGA}
+
+  {these are for supporting tfastwriteln}
+  tfwx:byte=0;
+  tfwy:word=0;
+  tfwc:byte=0;
+  tfwp:pointer=ptr($b800,0); {dummy default value}
 
 Var
   tfOFStable:Array[0..maxscrlines-1] Of Word;
@@ -321,7 +341,7 @@ Much thanks to Richard Wilton for the idea and example code.
 
 Const
   horiz_timeout=6;
-  vb_chunksize=480; {empirically discovered on a stock IBM 5160}
+  vb_chunksize=478; {empirically discovered on a stock IBM 5160}
 
 Asm
   cmp     tftableready,0   {we need this to get sizeinwords}
@@ -331,8 +351,13 @@ Asm
   les     DI, destscr
   push    DS
   lds     SI, sourcescr
+  mov     dx,es
+  cmp     dx,$b000         {are we writing to the MDA?}
+  je      @slamit          {if so, jump to the fast screen update loop}
   cmp     AL, 0            {is preventsnow true?}
   ja      @doitnicely      {if so, jump to our screen update loop}
+
+@slamit:
   cld
   rep     movsw            {if not, slam it!!}
   jmp     @donecopy        {...and then exit the routine}
@@ -407,8 +432,24 @@ Asm
 @finalend:
 End;
 
-Begin
-  If Mem[$0000:$0449]=7
-    then tfscreenseg:=$b000
-    else tfscreenseg:=$b800;
-End.
+Procedure tfastsetpos(x,y:word); begin tfwx:=x; tfwy:=y; end;
+
+Procedure tfastsetcolor(b:byte); begin tfwc:=b; end;
+
+Procedure tfastsetdest(p:pointer); begin tfwp:=p; end;
+
+Procedure tfastwrite_(s:string);
+begin
+  tfastwritexy(@s,tfwp, tfwx, tfwy, tfwc);
+  inc(tfwx,length(s));
+end;
+
+Procedure tfastwriteln(s:string);
+begin
+  tfastwritexy(@s,tfwp, tfwx, tfwy, tfwc);
+  tfwx:=0;
+  inc(tfwy);
+end;
+
+begin
+end.
