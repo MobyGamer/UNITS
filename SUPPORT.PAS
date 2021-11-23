@@ -57,7 +57,7 @@ Function hexword(w:word):s12;
 Procedure moveword(src,dst:pointer;size:word); {Built for speed, DOES NOT HANDLE OVERLAPPING BLOCKS AT ALL!}
 Procedure fillword(dst:pointer;size:word;filler:byte);
 Procedure FatalError(errnum:byte;s:string);
-Function BuffersEqual(p1,p2:pointer;size:word):word; {compares two buffers; reports 0 if equal, or offset where not}
+Function BuffersEqual(p1,p2:pointer;size:word):word; {compares two buffers; reports 0 if equal, or position where not}
 Function p2l(p:pointer):longint; {converts an x86 16-bit seg:ofs pointer to a 20-bit linear offset}
 function l2p(l:longint):pointer; {converts a 20-bit linear offset to an x86 16-bit seg:ofs pointer}
 Function SubPtr(p:Pointer;d:LongInt):Pointer;
@@ -409,20 +409,19 @@ end;
 
 function BuffersEqual;assembler;
 asm
-  push ds
-  lds si,p1
-  les di,p2
-  mov cx,size
-  xor ax,ax {assume test will be successful}
-  cld
-  repe cmpsb
-  cmp cx,0
-  je @done
-  mov ax,size {if cx<>0 then buffers are not equal}
-  sub ax,cx
-  dec ax {to report offset instead of absolute location}
+        push    ds
+        lds     si,p1
+        les     di,p2
+        mov     cx,size
+        xor     ax,ax                   {assume test will be successful}
+        cld
+        repe    cmpsb
+        cmp     cx,0                    {are buffers equal?}
+        je      @done                   {if so, done}
+        mov     ax,size                 {if cx<>0 then buffers are not equal}
+        sub     ax,cx                   {report buffer pos where they differ}
 @done:
-  pop ds
+        pop ds
 end;
 
 procedure fatalerror;
@@ -573,9 +572,9 @@ begin
     mov oldScreenParams.VideoCols,ah
     {
     Number of rows not returned by BIOS.  Have to calc number of rows from:
-        40:4A	word	Number of screen columns
-        40:4C	word	Size of current video regen buffer in bytes
-        40:84	byte	Rows on the screen (less 1, EGA+)
+        40:4A   word    Number of screen columns
+        40:4C   word    Size of current video regen buffer in bytes
+        40:84   byte    Rows on the screen (less 1, EGA+)
 
     Try to get from 40:84 first.  If early BIOS has that empty, then calc
     it based on the info it does give us.
@@ -979,8 +978,9 @@ Function basename(ins:string):string;
 var
   b:byte;
 begin
-  for b:=0 to 3 do if ins[length(ins)-b]='.'
-    then delete(ins,length(ins)-b,b+1);
+  for b:=0 to 3 do
+    if ins[length(ins)-b]='.'
+      then delete(ins,length(ins)-b,b+1);
   basename:=ins;
 end;
 
@@ -1214,6 +1214,8 @@ end;
 
 
 begin
-  If Mem[$0000:$0449]=7 then vidp:=ptr($b000,0);
+  {$IFDEF STARTUP_MSGS} writeln('Support unit starting...'); {$ENDIF}
+  If Mem[$0000:$0449]=7
+    then vidp:=ptr($b000,0);
   RecordDOSScreen;
 end.

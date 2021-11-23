@@ -1,7 +1,7 @@
 {$F+,O-}
 {$R-,S-} {must NOT have stack checking!}
 {
-Trixter's interrupt and timer unit.  Version 0.4 20160424
+Trixter's interrupt and timer unit.  Version 0.41 20191219
 This unit wouldn't be possible without the hard work and writing of:
   Mark Feldman
   Kris Heidenstrom (RIP)
@@ -21,6 +21,7 @@ interface
 
 const
   sysclockfreq=(315/22) * 1000000; {system clock derived from NTSC 14.318182 MHz }
+  {sysclockfreq=(13125000/11);} {this is also valid}
   PITFreq=round(sysclockfreq / 12); {Programmable Interrupt Timer frequency, should be $1234de}
   usecPerTick=1000000 / PITFreq; {# of microseconds per system tick}
   CGAFrameCycles=(912*262) div 12; {# of PIT cycles per CGA display frame}

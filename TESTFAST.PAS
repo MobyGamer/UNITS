@@ -94,7 +94,7 @@ begin
     {$ENDIF}
 
     _PZtimerOn;
-    tfastcopyscreen(hidden,scrp);
+    tfastcopyscreen(hidden,scrp,80*25*2);
     _PZtimerOff;
     s:='tfastcopyscreen execution time: '
        +inttostr(_PZtimerCount)+' æsec ('
