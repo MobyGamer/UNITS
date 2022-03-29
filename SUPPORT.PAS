@@ -258,7 +258,6 @@ begin
   fileExists := fSearch(filename, '') <> '';
 end;
 
-
 Function SizeOfFile(filename:string):longint;
 Var
   f:File;

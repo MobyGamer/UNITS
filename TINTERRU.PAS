@@ -13,7 +13,7 @@ See tinttest.pas for example usage.
 Version 0.3 20130503 added PCjr vint stuff
 }
 
-{$DEFINE HIDDEN} {define if CGAVINT needs to start in vertical retrace only}
+{{$DEFINE HIDDEN} {define if CGAVINT needs to start in vertical retrace only}
 
 unit TInterrupts;
 
@@ -21,8 +21,11 @@ interface
 
 const
   sysclockfreq=(315/22) * 1000000; {system clock derived from NTSC 14.318182 MHz }
-  {sysclockfreq=(13125000/11);} {this is also valid}
+
   PITFreq=round(sysclockfreq / 12); {Programmable Interrupt Timer frequency, should be $1234de}
+  {PITfreq=(13125000/11);} {this is also valid}
+  {PITfreq=(105000000/88);} {this is also valid}
+  tickHz=PITFreq / 65536;
   usecPerTick=1000000 / PITFreq; {# of microseconds per system tick}
   CGAFrameCycles=(912*262) div 12; {# of PIT cycles per CGA display frame}
   SystemTimerInt=8;
@@ -119,16 +122,16 @@ implementation
 
 The Mode/Command register at I/O address 43h is defined as follows:
 
-	7 6 5 4 3 2 1 0
-	* * . . . . . .  Select channel:   0 0 = Channel 0
+        7 6 5 4 3 2 1 0
+        * * . . . . . .  Select channel:   0 0 = Channel 0
                                      0 1 = Channel 1
                                      1 0 = Channel 2
                                      1 1 = Read-back command (8254 only) (Illegal on 8253) (Illegal on PS/2)
-	. . * * . . . .  Cmd./Access mode: 0 0 = Latch count value command
+        . . * * . . . .  Cmd./Access mode: 0 0 = Latch count value command
                                      0 1 = Access mode: lobyte only
                                      1 0 = Access mode: hibyte only
                                      1 1 = Access mode: lobyte/hibyte
-	. . . . * * * .  Operating mode: 0 0 0 = Mode 0
+        . . . . * * * .  Operating mode: 0 0 0 = Mode 0
                                    0 0 1 = Mode 1
                                    0 1 0 = Mode 2
                                    0 1 1 = Mode 3
@@ -136,7 +139,7 @@ The Mode/Command register at I/O address 43h is defined as follows:
                                    1 0 1 = Mode 5
                                    1 1 0 = Mode 2
                                    1 1 1 = Mode 3
-	. . . . . . . *  BCD/Binary mode:    0 = 16-bit binary
+        . . . . . . . *  BCD/Binary mode:    0 = 16-bit binary
                                        1 = four-digit BCD
 
 The SC1 and SC0 (Select Channel) bits form a two-bit binary code which tells
@@ -208,7 +211,7 @@ begin
   {check for valid input allowed:
     only channels 0 and 2 (1 is for DRAM REFRESH, do NOT touch!)
     only accessmodes 1 through 3 (0 is not an access mode)}
-	if not (channel in [0,2]) or not (accessMode in [1..3]) then exit;
+        if not (channel in [0,2]) or not (accessMode in [1..3]) then exit;
   {precalc how we're going to set the channel, so we don't tie up too much
   time with interrupts turned off}
   modecmd:=(channel shl 6) + (accessMode shl 4) + ((mode AND $7) shl 1); {bit 0 always 0 for 16-bit mode}
@@ -216,7 +219,7 @@ begin
   hibyte:=hi(divisor);
   chanport:=chan0base+channel;
   {must make these changes atomic, so disable interrupts before starting}
-	asm
+        asm
     {get to end of display cycle}
     mov   dx,m6845_status
     mov   bl,c_vertical_sync
