@@ -2,7 +2,7 @@
 {$R-,S-,G-,Q-}
 {
 Generic support routines, JL19871013.
-Last updated: 20180713
+Last updated: 20241105
 }
 
 {{$DEFINE DEBUG}
@@ -415,9 +415,8 @@ asm
         xor     ax,ax                   {assume test will be successful}
         cld
         repe    cmpsb
-        cmp     cx,0                    {are buffers equal?}
-        je      @done                   {if so, done}
-        mov     ax,size                 {if cx<>0 then buffers are not equal}
+        je      @done                   {if ZF set, done}
+        mov     ax,size                 {if ZF unset then buffers not equal}
         sub     ax,cx                   {report buffer pos where they differ}
 @done:
         pop ds

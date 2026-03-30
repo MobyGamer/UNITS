@@ -16,7 +16,7 @@ a counter. Then it checks to see if the BIOS handler should be called.
 If so, it calls it; if not, it acknowledges the interrupt itself.
 
 Do not do any LONGINT stuff in an interrupt handler with Turbo Pascal 7
-because the 32-bit-away routines do not preserve the upper bits of
+because the 32-bit-aware routines do not preserve the upper bits of
 ax/bx/cx/dx. If you must, and your code will run on 386s or higher,
 make sure you PUSH EAX/EBX/ECX/EDX before starting and POP when done.
 }

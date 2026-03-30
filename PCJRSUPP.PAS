@@ -1,5 +1,9 @@
 unit PCjrSupport;
-{quick'n'dirty PCjr (and Tandy 1000) support routines}
+{
+quick'n'dirty PCjr (and Tandy 1000) support routines
+20130704, trixter@oldskool.org
+}
+
 
 interface
 
@@ -89,6 +93,11 @@ I believe I'm the first to discover this, a true 160x100x16 mode for
 PCjr  :-D  \o/   /o/   \o\   /o/   \o\
 
 If you use this mode, please credit "Trixter" for discovering it!
+
+Update: NewRisingSun found out how to perform this trick on Tandy 1000 systems:
+PCjr: clear bits 6 and 7 on 3DF
+Tandy SX/TX/EX/HX: as PCjr plus set bit 0 on 3DD
+Tandy TL/SL/RL: as PCjr plus set bit 0 on array register 5
 }
 
 asm
